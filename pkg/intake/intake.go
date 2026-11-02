@@ -312,6 +312,12 @@ func StripTags(s string) string {
 // htmlSkippedElements hold no rendered document text.
 var htmlSkippedElements = []string{"script", "style", "noscript", "template"}
 
+// StripRTF reduces RTF to its text, dropping control words and the groups
+// rtfSkippedDestination reports. \uN yields its Unicode character; an \'xx byte
+// >= 0x80 is decoded in the code page of the document-level \ansicpgN, or
+// Windows-1252 when there is none. Per-font \fcharset is not honoured, and a
+// code page rtfCodepageDecoder cannot decode, such as the double-byte
+// 932/936/949/950, yields U+FFFD.
 func StripRTF(s string) string {
 	var b strings.Builder
 	// Word, WordPad and LibreOffice always emit exactly one fallback unit
