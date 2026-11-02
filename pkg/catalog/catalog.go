@@ -183,6 +183,8 @@ func (s *Store) markActive() bool {
 
 func (s *Store) clearActive() { s.mu.Lock(); s.active = false; s.mu.Unlock() }
 
+var errEmptyLandscape = errors.New("catalog: landscape parsed to zero projects; keeping existing catalog")
+
 // Refresh fetches the landscape, enriches GitHub projects, and persists it.
 func (s *Store) Refresh(ctx context.Context) error {
 	projects, err := FetchLandscape(ctx, s.client())
@@ -193,6 +195,11 @@ func (s *Store) Refresh(ctx context.Context) error {
 	prev := make(map[string]Project)
 	for _, p := range s.List() {
 		prev[p.RepoID] = p
+	}
+	// A 200 that parses to nothing (empty body, renamed upstream keys) is a
+	// degraded fetch, not a landscape that legitimately lost every project.
+	if len(projects) == 0 && len(prev) > 0 {
+		return errEmptyLandscape
 	}
 	// Enrich never-fetched and oldest projects first so each rate-limited
 	// pass makes forward progress; the persisted slice stays sorted by RepoID.
