@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -251,5 +252,63 @@ func TestUpsertRollsBackWhenPersistFails(t *testing.T) {
 	}
 	if got := s.Get("org/new"); len(got) != 0 {
 		t.Fatalf("new entry served after failed persist: %+v", got)
+	}
+}
+
+func TestRefreshRetriesFallbackCardAfterLLMRecovers(t *testing.T) {
+	const tldr = "Auth and chart fixes shipped; cadence is rising across UI work."
+	var healthy atomic.Bool
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if !healthy.Load() {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": tldr}}},
+		})
+	}))
+	defer srv.Close()
+
+	st, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	g := &Generator{
+		Store: st,
+		Fetcher: &fakeFetcher{prs: []history.MergedPullRequest{
+			pr("fix auth refresh", "2026-08-19T10:00:00Z", "alice"),
+			pr("add chart cards", "2026-08-19T11:00:00Z", "bob"),
+		}},
+		LLM: &match.LLM{BaseURL: srv.URL, Model: "test", Client: srv.Client()},
+		Now: newsNow,
+	}
+	ctx := context.Background()
+	if err := g.Refresh(ctx, "org/repo"); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if items := st.Get("org/repo"); len(items) != 1 || items[0].Source != "digest" {
+		t.Fatalf("after failure items = %+v", items)
+	}
+
+	healthy.Store(true)
+	if err := g.Refresh(ctx, "org/repo"); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	items := st.Get("org/repo")
+	if len(items) != 1 || items[0].Source != "llm" || items[0].TLDR != tldr {
+		t.Fatalf("after recovery items = %+v", items)
+	}
+
+	before := hits.Load()
+	if err := g.Refresh(ctx, "org/repo"); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if got := hits.Load(); got != before {
+		t.Fatalf("llm card regenerated: hits %d -> %d", before, got)
+	}
+	if items := st.Get("org/repo"); len(items) != 1 || items[0].Source != "llm" {
+		t.Fatalf("after reuse items = %+v", items)
 	}
 }

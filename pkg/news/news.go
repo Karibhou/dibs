@@ -263,7 +263,10 @@ func (g *Generator) Refresh(ctx context.Context, repoID string) error {
 	for _, date := range dates {
 		prs := grouped[date]
 		fp := fingerprintPRs(prs)
-		if old, ok := cached[date]; ok && old.Fingerprint == fp {
+		// A fallback card written while the LLM was failing must be retried once
+		// an LLM is configured again (dibs#559). Cost is bounded: Refresh runs at
+		// most once per UTC day per repo over at most 14 dates.
+		if old, ok := cached[date]; ok && old.Fingerprint == fp && (g.LLM == nil || old.Source == "llm") {
 			items = append(items, old)
 			continue
 		}
