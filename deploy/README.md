@@ -39,6 +39,57 @@ kubectl apply -f deploy/ingress.yaml
    is served at `dibs.hivecommons.dev` and why the legacy host is a redirect
    rather than serving the app (hivecommons/hive#5925).
 
+## Weekly production image review
+
+Production image updates are a reviewed, operator-executed handoff, not
+automatic deployment. Nothing in this repository deploys to the cluster.
+
+- **Cadence:** review every Monday (UTC). Important fixes may be reviewed
+  out of cycle.
+- **Owner:** @clubanderson is the release-review coordinator and operator
+  contact.
+- **Deferral:** a review may defer deployment with a reason and the next
+  review date. A deadline is not permission to deploy.
+- **Where to record:** post each week's record on tracking issue
+  [#567](https://github.com/hivecommons/dibs/issues/567), which stays open
+  for the recurring obligation. Do not mark a field complete unless it has
+  been verified; operator-only fields (running version, previous image,
+  backup, rollout result) are confirmed by the operator.
+- **Related work:** the one-time stale-production rollout is tracked in
+  [#558](https://github.com/hivecommons/dibs/issues/558).
+
+### Candidate gates
+
+1. Use an exact commit on `main` that is green for CI, for Go Security (a
+   separate workflow, check it separately) and for Docker publication.
+2. Resolve the published multi-architecture digest (`linux/amd64` and
+   `linux/arm64`) and use the immutable
+   `ghcr.io/hivecommons/dibs@sha256:...` reference as the production pin,
+   recording its source commit. Never pin `:latest` or another floating tag.
+3. Review the actual persistence changes between the running version and the
+   candidate (not just commit titles) and assess rollback compatibility; see
+   [data recovery](../runbooks/data-recovery.md).
+4. Keep the previous deployed image/digest and a verified data backup before
+   the operator proceeds, per
+   [release rollback](../runbooks/release-rollback.md) and
+   [data recovery](../runbooks/data-recovery.md).
+5. Pin changes to `deploy/deployment.yaml` go through a normal reviewed PR
+   with OWNERS review and CI; no automatic merges.
+
+### Review / handoff record
+
+```text
+Review date (UTC) / coordinator:
+Running version (/healthz) and previous image/digest:   (operator-confirmed)
+Candidate commit:
+Immutable digest (amd64 + arm64): ghcr.io/hivecommons/dibs@sha256:...
+Evidence: CI / Go Security / Docker publication (links):
+Persistence changes vs running version and rollback assessment:
+Backup requirement / verified backup:                   (operator-confirmed)
+Disposition: deploy | defer (reason, next review date):
+Operator rollout result: /healthz expected version, /readyz, or rollback:
+```
+
 ## Environment variables
 
 | Variable | Source | Default | Purpose |

@@ -12,6 +12,11 @@ pod keeps serving until the new one is Ready. A release that never becomes
 Ready therefore stalls instead of taking Dibs down; a release that becomes
 Ready and then misbehaves needs the rollback below.
 
+Release candidates are reviewed weekly and handed to an operator; see
+[Weekly production image review](../deploy/README.md#weekly-production-image-review)
+for the cadence and the handoff record (including the previous image/digest
+to roll back to).
+
 ## 1. Confirm the rollout is the cause
 
 ```sh
