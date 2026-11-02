@@ -278,6 +278,16 @@ func TestStripRTFUnicodeAndCodepage(t *testing.T) {
 		{"fallback skip stops at group open", `\uc2\u1055{?}x`, "П?x"},
 		{"hex fallback consumed as one unit", `\u1055\'92x`, "Пx"},
 		{"lone low surrogate is replaced", `\u-9089?x`, "\uFFFDx"},
+		{"explicit cp1252", `\ansi\ansicpg1252 caf\'e9`, "café"},
+		{"cp1251 cyrillic", `\ansi\ansicpg1251 \'cf\'f0\'e8\'e2\'e5\'f2`, "Привет"},
+		{"cp1250 central european", `\ansicpg1250 \'9am\'ec`, "šmě"},
+		{"cp1253 greek", `\ansicpg1253 \'e1\'e2\'e3`, "αβγ"},
+		{"cp866 dos cyrillic", `\ansicpg866 \'8f`, "П"},
+		{"ascii unaffected by codepage", `\ansicpg1251 \'41b`, "Ab"},
+		{"uN wins over codepage fallback", `\ansicpg1251 \u1055\'cf`, "П"},
+		{"double-byte codepage not guessed", `\ansicpg932 \'82\'a0`, "��"},
+		{"unknown codepage not guessed", `\ansicpg99999 \'cf`, "�"},
+		{"codepage without parameter keeps 1252", `\ansicpg \'e9`, "é"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

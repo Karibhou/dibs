@@ -24,6 +24,7 @@ import (
 	"github.com/hivecommons/dibs/pkg/envutil"
 	"github.com/ledongthuc/pdf"
 	nethtml "golang.org/x/net/html"
+	"golang.org/x/text/encoding/charmap"
 )
 
 const (
@@ -317,6 +318,7 @@ func StripRTF(s string) string {
 	// after \uN, so group-scoped \uc tracking is unnecessary.
 	ucSkip := 1
 	var highSurrogate rune
+	decodeByte := windows1252Rune
 	for i := 0; i < len(s); {
 		c := s[i]
 		switch c {
@@ -341,7 +343,7 @@ func StripRTF(s string) string {
 			if s[i] == '\'' && i+2 < len(s) {
 				if v, ok := parseHexByte(s[i+1], s[i+2]); ok {
 					if v >= 0x80 {
-						b.WriteRune(windows1252Rune(v))
+						b.WriteRune(decodeByte(v))
 					} else {
 						b.WriteByte(v)
 					}
@@ -380,6 +382,10 @@ func StripRTF(s string) string {
 			case "uc":
 				if hasParam && n >= 0 {
 					ucSkip = n
+				}
+			case "ansicpg":
+				if hasParam {
+					decodeByte = rtfCodepageDecoder(n)
 				}
 			case "u":
 				if !hasParam {
@@ -436,6 +442,31 @@ func windows1252Rune(v byte) rune {
 		return windows1252High[v-0x80]
 	}
 	return rune(v)
+}
+
+// rtfCodepages are the single-byte code pages an RTF \ansicpgN may name,
+// besides 1252, which windows1252Rune handles.
+var rtfCodepages = map[int]*charmap.Charmap{
+	437: charmap.CodePage437, 850: charmap.CodePage850, 852: charmap.CodePage852,
+	866: charmap.CodePage866, 874: charmap.Windows874,
+	1250: charmap.Windows1250, 1251: charmap.Windows1251, 1253: charmap.Windows1253,
+	1254: charmap.Windows1254, 1255: charmap.Windows1255, 1256: charmap.Windows1256,
+	1257: charmap.Windows1257, 1258: charmap.Windows1258,
+	10000: charmap.Macintosh, 10007: charmap.MacintoshCyrillic,
+	20866: charmap.KOI8R, 21866: charmap.KOI8U,
+}
+
+// rtfCodepageDecoder returns the \'xx decoder for an \ansicpgN document. A
+// code page it cannot decode, such as the double-byte 932/936/949/950,
+// yields U+FFFD rather than another code page's letters.
+func rtfCodepageDecoder(cp int) func(byte) rune {
+	if cp == 1252 {
+		return windows1252Rune
+	}
+	if cm, ok := rtfCodepages[cp]; ok {
+		return cm.DecodeByte
+	}
+	return func(byte) rune { return utf8.RuneError }
 }
 
 var rtfSkippedDestinations = map[string]bool{
