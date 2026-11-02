@@ -77,6 +77,29 @@ func TestMutateIssueURLCheckReadError(t *testing.T) {
 	}
 }
 
+// TestMutateIssueURLCheckSkipsRemovedSibling: a sibling whose idea file was
+// removed at runtime (index row still present until the next restart prunes
+// it) cannot hold an issue, so it must not block claims by other ideas.
+func TestMutateIssueURLCheckSkipsRemovedSibling(t *testing.T) {
+	s, _ := newTestStore(t)
+	claimant := newIdea(t, s, VisibilityPublic)
+	gone := newIdea(t, s, VisibilityPublic)
+	if err := os.Remove(s.ideaPath(gone.ID)); err != nil {
+		t.Fatal(err)
+	}
+
+	const url = "https://github.com/org/repo/issues/11"
+	if _, err := s.Mutate(claimant.ID, true, func(i *Idea) error {
+		i.IssueURL = url
+		return nil
+	}); err != nil {
+		t.Fatalf("Mutate blocked by removed sibling: %v", err)
+	}
+	if got, err := s.Get(claimant.ID); err != nil || got.IssueURL != url {
+		t.Fatalf("claim not persisted: idea=%+v err=%v", got, err)
+	}
+}
+
 // TestIssueURLKeyCanonicalNumber: every spelling of one issue number maps
 // to the same key, so "+5" or "05" cannot bypass the one-issue-one-idea check.
 func TestIssueURLKeyCanonicalNumber(t *testing.T) {
