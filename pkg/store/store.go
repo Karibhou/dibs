@@ -210,7 +210,9 @@ func issueURLKey(raw string) string {
 }
 
 // checkIssueURLFreeLocked rejects issueURL when another idea already holds
-// it: one filed issue settles at most one idea. Caller holds s.mu.
+// it: one filed issue settles at most one idea. A sibling whose file was
+// removed at runtime holds no issue, so it is skipped like list() skips it;
+// any other read error aborts the claim. Caller holds s.mu.
 func (s *Store) checkIssueURLFreeLocked(id, issueURL string) error {
 	key := issueURLKey(issueURL)
 	for otherID := range s.index {
@@ -218,6 +220,9 @@ func (s *Store) checkIssueURLFreeLocked(id, issueURL string) error {
 			continue
 		}
 		other, err := s.readLocked(otherID)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
