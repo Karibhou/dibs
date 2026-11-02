@@ -1,6 +1,12 @@
 # Deploying Dibs at dibs.hivecommons.dev
 
-Plain Kubernetes manifests — no helm. Apply in order (or all at once):
+Plain Kubernetes manifests — no helm. For the existing production service,
+complete the backup and previous-image gates in [rollout #558](rollout-558.md)
+**before** applying the pinned Deployment below. Merging a pin is not a rollout.
+The weekly reviewed update cadence is tracked separately in
+[#567](https://github.com/hivecommons/dibs/issues/567).
+
+For a new installation, apply in order:
 
 ```sh
 kubectl apply -f deploy/namespace.yaml
@@ -23,7 +29,9 @@ kubectl apply -f deploy/ingress.yaml
    the issuer name in `ingress.yaml` if yours differs).
 3. **Image**: `ghcr.io/hivecommons/dibs` is published automatically by the
    `docker.yml` workflow on every push to `main` whose CI run is green (tags
-   `latest` + commit sha). Pin the Deployment to a sha for production.
+   `latest` + commit sha). Production uses the reviewed immutable image-index
+   digest in `deployment.yaml`; record its source sha and validation evidence
+   when updating the pin. Never deploy `latest` to production.
 4. **Hub session sharing**: Dibs authenticates by validating the hub's
    `hive_hub_user` session cookie, so Dibs and the hub must share a
    registrable domain — the hub scopes the cookie to `.hivecommons.dev`, and
