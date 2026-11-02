@@ -97,3 +97,35 @@ jobs:
           name: coverage-${{ github.sha }}
           path: coverage.out
           retention-days: 14
+
+  mutation-report:
+    # Advisory (phase 1 of #531): never blocks. Reports surviving mutants in
+    # changed code; any ratchet needs a separate data-backed decision after
+    # ~14 days of observed runtime and flakiness.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: Gremlins mutation report (advisory)
+        # Reproduce locally: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+        # && gremlins unleash --diff origin/main ./pkg/...
+        run: |
+          set -uo pipefail
+          go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+          {
+            echo '### Mutation report (gremlins v0.6.0, advisory, changed code vs origin/main)'
+            echo '```text'
+          } >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          timeout 15m "$(go env GOPATH)/bin/gremlins" unleash --diff origin/main ./pkg/... 2>&1 \
+            | tee -a "$GITHUB_STEP_SUMMARY" || status=$?
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "gremlins exit status: ${status} (124 = timed out; advisory only)" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 0
