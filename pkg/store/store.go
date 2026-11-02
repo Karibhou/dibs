@@ -397,14 +397,16 @@ func New(dir string) (*Store, error) {
 }
 
 // reconcileLocked adopts idea files that are missing from the index (e.g.
-// left behind by a crash or failed index write) and rewrites the index.
+// left behind by a crash or failed index write), prunes index rows whose
+// idea file is gone, and rewrites the index if anything changed. Rows whose
+// file cannot be stat'ed for other reasons are kept so disk faults surface.
 // Unreadable or corrupt files are skipped, not adopted.
 func (s *Store) reconcileLocked() error {
 	files, err := os.ReadDir(s.dir)
 	if err != nil {
 		return fmt.Errorf("store: scanning ideas dir: %w", err)
 	}
-	added := false
+	changed := false
 	for _, f := range files {
 		name := f.Name()
 		id, ok := strings.CutSuffix(name, ".json")
@@ -423,9 +425,15 @@ func (s *Store) reconcileLocked() error {
 			continue
 		}
 		s.index[id] = indexEntry{ID: id, Author: idea.Author, Visibility: idea.Visibility, Symbol: idea.Symbol, UpdatedAt: idea.UpdatedAt}
-		added = true
+		changed = true
 	}
-	if added {
+	for id := range s.index {
+		if _, err := os.Stat(s.ideaPath(id)); errors.Is(err, os.ErrNotExist) {
+			delete(s.index, id)
+			changed = true
+		}
+	}
+	if changed {
 		return s.writeIndexLocked()
 	}
 	return nil
@@ -801,6 +809,10 @@ func (s *Store) list(keep func(indexEntry) bool) ([]*Idea, error) {
 			continue
 		}
 		idea, err := s.readLocked(e.ID)
+		if errors.Is(err, ErrNotFound) {
+			// A file removed at runtime must not take every listing down.
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}

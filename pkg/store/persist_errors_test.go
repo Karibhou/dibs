@@ -196,6 +196,58 @@ func TestNewAdoptsOrphanedIdeaFiles(t *testing.T) {
 	}
 }
 
+func TestNewPrunesIndexRowsWithoutFiles(t *testing.T) {
+	s, dir := newTestStore(t)
+	keep := validIdea("alice")
+	gone := validIdea("bob")
+	for _, i := range []*Idea{keep, gone} {
+		if err := s.Create(i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Remove(s.ideaPath(gone.ID)); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s2.Get(gone.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get removed err = %v, want ErrNotFound", err)
+	}
+	pub, err := s2.ListPublic()
+	if err != nil || len(pub) != 1 {
+		t.Fatalf("ListPublic = %d, %v; want 1", len(pub), err)
+	}
+	// The index was rewritten, so the row is gone from disk too.
+	raw, err := os.ReadFile(s2.indexPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), gone.ID) {
+		t.Fatalf("index.json still contains %s", gone.ID)
+	}
+}
+
+func TestListSkipsIdeaFileRemovedAfterOpen(t *testing.T) {
+	s, _ := newTestStore(t)
+	keep := validIdea("alice")
+	gone := validIdea("bob")
+	for _, i := range []*Idea{keep, gone} {
+		if err := s.Create(i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Remove(s.ideaPath(gone.ID)); err != nil {
+		t.Fatal(err)
+	}
+	pub, err := s.ListPublic()
+	if err != nil || len(pub) != 1 {
+		t.Fatalf("ListPublic = %d, %v; want 1, nil", len(pub), err)
+	}
+}
+
 func TestNewReconcileKeepsPrivateOrphansOutOfPublicList(t *testing.T) {
 	s, dir := newTestStore(t)
 	orphan := validIdea("bob")
