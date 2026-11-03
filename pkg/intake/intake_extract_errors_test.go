@@ -88,7 +88,8 @@ func (nopWriteCloser) Close() error { return nil }
 
 // TestStripRTFEscapesAndParams covers the control-symbol and control-word
 // arms the basic fixture never reaches: escaped braces and backslashes,
-// multi-digit and negative numeric parameters, and a trailing backslash.
+// multi-digit and negative numeric parameters, a trailing backslash, and the
+// \~ \- \_ and escaped-newline control symbols.
 func TestStripRTFEscapesAndParams(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -101,6 +102,15 @@ func TestStripRTFEscapesAndParams(t *testing.T) {
 		{"param without delimiter", `\fs24big`, " big"},
 		{"trailing backslash", `tail\`, "tail"},
 		{"group braces dropped", `{\rtf1 {\b bold}}`, "  bold"},
+		{"optional hyphen is invisible", `hy\-phen`, "hyphen"},
+		{"optional hyphen keeps following digits", `page\-12 end`, "page12 end"},
+		{"non-breaking space", `10\~kg`, "10\u00a0kg"},
+		{"non-breaking hyphen", `e\_mail`, "e\u2011mail"},
+		{"control symbol keeps following space", `a\~ b`, "a\u00a0 b"},
+		{"escaped newline is a paragraph", "a\\\nb", "a\nb"},
+		{"escaped CRLF is one paragraph", "a\\\r\nb", "a\nb"},
+		{"other control symbols dropped", `a\:b\|c\*d`, "abcd"},
+		{"truncated hex escape", `x\'e`, "xe"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

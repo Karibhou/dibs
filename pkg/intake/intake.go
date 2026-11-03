@@ -313,7 +313,9 @@ func StripTags(s string) string {
 var htmlSkippedElements = []string{"script", "style", "noscript", "template"}
 
 // StripRTF reduces RTF to its text, dropping control words and the groups
-// rtfSkippedDestination reports. \uN yields its Unicode character; an \'xx byte
+// rtfSkippedDestination reports. The control symbols \~ and \_ yield U+00A0
+// and U+2011, \ before a line break yields a newline, and \- and any other
+// symbol yield nothing. \uN yields its Unicode character; an \'xx byte
 // >= 0x80 is decoded in the code page of the document-level \ansicpgN, or
 // Windows-1252 when there is none. Per-font \fcharset is not honoured, and a
 // code page rtfCodepageDecoder cannot decode, such as the double-byte
@@ -355,6 +357,22 @@ func StripRTF(s string) string {
 					}
 				}
 				i += 3
+				continue
+			}
+			if sym := s[i]; sym < utf8.RuneSelf && !(sym >= 'a' && sym <= 'z') && !(sym >= 'A' && sym <= 'Z') {
+				// A control symbol: one character, no parameter or delimiter.
+				switch sym {
+				case '~':
+					b.WriteRune('\u00a0')
+				case '_':
+					b.WriteRune('\u2011')
+				case '\r', '\n':
+					b.WriteByte('\n')
+					if sym == '\r' && i+1 < len(s) && s[i+1] == '\n' {
+						i++
+					}
+				}
+				i++
 				continue
 			}
 			wordStart := i
