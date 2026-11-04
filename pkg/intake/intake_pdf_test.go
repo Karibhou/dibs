@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/ledongthuc/pdf"
 )
 
 // pdfPageObjects returns a one-page document (catalog, pages tree, page,
@@ -95,5 +97,22 @@ func TestExtractPDFReturnsPageTextError(t *testing.T) {
 	}
 	if got != "" {
 		t.Fatalf("text = %q, want empty on page error", got)
+	}
+}
+
+// TestPDFPageContentExceedsUndecodableStream pins the recover inside
+// pdfPageContentExceeds: Value.Reader panics on a filter it cannot decode,
+// and the budget probe must report "not exceeded" (rather than propagate
+// the panic to ExtractPDF's recover) so GetPlainText surfaces the ordinary
+// unknown-filter error.
+func TestPDFPageContentExceedsUndecodableStream(t *testing.T) {
+	t.Parallel()
+	doc := assemblePDF(pdfPageObjects("hi", "/Filter /NoSuchDecode "))
+	r, err := pdf.NewReader(bytes.NewReader(doc), int64(len(doc)))
+	if err != nil {
+		t.Fatalf("NewReader: %v", err)
+	}
+	if pdfPageContentExceeds(r.Page(1), 1) {
+		t.Fatal("pdfPageContentExceeds = true for an undecodable stream, want false so the page error is reported")
 	}
 }

@@ -35,7 +35,12 @@ const (
 	// the XML decoder (see ExtractDOCX). Far above any real document that
 	// yields MaxReturnedRunes of text, far below the pod memory limit.
 	maxDOCXXMLBytes = 16 << 20
-	sttTimeout      = 60 * time.Second
+	// maxPDFPageContentBytes caps the DECOMPRESSED content stream of a single
+	// PDF page before its text is extracted (see ExtractPDF). Same budget and
+	// rationale as maxDOCXXMLBytes: far above any real page that yields
+	// MaxReturnedRunes of text, far below the pod memory limit.
+	maxPDFPageContentBytes = 16 << 20
+	sttTimeout             = 60 * time.Second
 )
 
 var (
@@ -162,9 +167,14 @@ func ExtractDocument(ext string, data []byte) (string, error) {
 // materialize every page's decompressed text in one buffer, so a crafted
 // PDF whose FlateDecode streams expand ~1000:1 could turn a within-cap
 // upload into multi-GB allocations; the caller only ever keeps
-// MaxReturnedRunes anyway. The parser also panics on malformed input
-// (reader-level entry points have no recover), so panics are converted to
-// ordinary errors here.
+// MaxReturnedRunes anyway. The cross-page cap below is not enough on its
+// own, because GetPlainText still buffers a SINGLE page's whole decoded
+// text before that cap is consulted — so one page whose content stream
+// inflates ~1000:1 is its own OOM bomb (hivecommons/dibs#583). Each page's
+// decompressed content stream is therefore budgeted first, exactly as
+// ExtractDOCX budgets word/document.xml. The parser also panics on
+// malformed input (reader-level entry points have no recover), so panics
+// are converted to ordinary errors here.
 func ExtractPDF(data []byte) (text string, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -183,6 +193,14 @@ func ExtractPDF(data []byte) (text string, err error) {
 		if p.V.IsNull() {
 			continue
 		}
+		// A page whose decompressed content stream exceeds the budget is a
+		// decompression bomb: stop here and return the text gathered from
+		// earlier within-budget pages, the same graceful truncation the
+		// rune cap performs. GetPlainText would otherwise buffer the whole
+		// page before the cap below could bound it.
+		if pdfPageContentExceeds(p, maxPDFPageContentBytes) {
+			break
+		}
 		for _, name := range p.Fonts() {
 			if _, ok := fonts[name]; !ok {
 				f := p.Font(name)
@@ -199,6 +217,43 @@ func ExtractPDF(data []byte) (text string, err error) {
 		}
 	}
 	return b.String(), nil
+}
+
+// pdfPageContentExceeds reports whether the DECOMPRESSED size of page p's
+// content stream(s) exceeds budget. It reads through an io.LimitedReader so
+// a bomb is detected without inflating the whole stream into memory: at most
+// budget+1 decompressed bytes are ever pulled.
+//
+// Value.Reader panics on streams it cannot decode (unknown filter, bad
+// zlib header). Those are not bombs: the function reports false and lets
+// GetPlainText, which recovers the same panic into an ordinary error,
+// surface them to the caller as before.
+func pdfPageContentExceeds(p pdf.Page, budget int64) (exceeds bool) {
+	defer func() {
+		if recover() != nil {
+			exceeds = false
+		}
+	}()
+	c := p.V.Key("Contents")
+	var total int64
+	measure := func(v pdf.Value) bool {
+		rc := v.Reader()
+		defer rc.Close()
+		n, _ := io.Copy(io.Discard, io.LimitReader(rc, budget-total+1))
+		total += n
+		return total > budget
+	}
+	switch c.Kind() {
+	case pdf.Array:
+		for i := 0; i < c.Len(); i++ {
+			if measure(c.Index(i)) {
+				return true
+			}
+		}
+	case pdf.Stream:
+		return measure(c)
+	}
+	return false
 }
 
 func ExtractDOCX(data []byte) (string, error) {

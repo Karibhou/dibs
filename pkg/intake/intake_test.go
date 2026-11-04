@@ -3,6 +3,7 @@ package intake
 import (
 	"archive/zip"
 	"bytes"
+	"compress/zlib"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -350,5 +351,81 @@ func TestExtractDOCXBudgetKeepsCollectedText(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "kept paragraph") {
 		t.Fatalf("budget path dropped collected text: %q", got)
+	}
+}
+
+// singlePageFlatePDF builds a one-page PDF whose content stream, once
+// FlateDecoded, is a run of "(AAA…)Tj" text-show operators totalling
+// decompressedBytes. The deflate output is tiny (repetitive data), so the
+// fixture itself stays well under the upload cap while the page inflates
+// ~1000:1 on extraction.
+func singlePageFlatePDF(t *testing.T, decompressedBytes int) []byte {
+	t.Helper()
+	var z bytes.Buffer
+	zw := zlib.NewWriter(&z)
+	chunk := []byte("(" + strings.Repeat("A", 1000) + ")Tj\n")
+	for written := 0; written < decompressedBytes; written += len(chunk) {
+		if _, err := zw.Write(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	comp := z.Bytes()
+
+	objects := []string{
+		`<< /Type /Catalog /Pages 2 0 R >>`,
+		`<< /Type /Pages /Kids [3 0 R] /Count 1 >>`,
+		`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Resources << >> /Contents 4 0 R >>`,
+		fmt.Sprintf("<< /Length %d /Filter /FlateDecode >>\nstream\n%s\nendstream", len(comp), comp),
+	}
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objects)+1)
+	for i, obj := range objects {
+		offsets[i+1] = b.Len()
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", i+1, obj)
+	}
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for i := 1; i <= len(objects); i++ {
+		fmt.Fprintf(&b, "%010d 00000 n \n", offsets[i])
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+	return b.Bytes()
+}
+
+// TestExtractPDFBoundsSinglePageDecompressedText pins the single-page
+// decompression-bomb guard (hivecommons/dibs#583). The cross-page rune cap
+// in ExtractPDF does not bound a single page: GetPlainText buffers that
+// page's whole decoded text first. A one-page PDF whose content stream
+// inflates far past maxPDFPageContentBytes must extract without
+// materializing it. Without pdfPageContentExceeds this allocates the full
+// decompressed size (a ~2 MiB upload reached ~1.4 GiB of heap).
+func TestExtractPDFBoundsSinglePageDecompressedText(t *testing.T) {
+	t.Parallel()
+	const decompressed = 8 * maxPDFPageContentBytes
+	pdfBytes := singlePageFlatePDF(t, decompressed)
+	if len(pdfBytes) > 1<<20 {
+		t.Fatalf("fixture should compress to well under 1 MiB, got %d bytes", len(pdfBytes))
+	}
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	got, err := ExtractPDF(pdfBytes)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatalf("ExtractPDF: %v", err)
+	}
+	if len([]rune(got)) > extractRunesLimit {
+		t.Fatalf("returned %d runes, want <= %d", len([]rune(got)), extractRunesLimit)
+	}
+	// The guard reads at most maxPDFPageContentBytes decompressed bytes
+	// (discarded) before skipping the page; the unbounded path would
+	// allocate the full 128 MiB node and more as the page buffer regrows.
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 6*maxPDFPageContentBytes {
+		t.Fatalf("ExtractPDF allocated %d bytes for a %d-byte upload; single-page decompression is unbounded", allocated, len(pdfBytes))
 	}
 }
