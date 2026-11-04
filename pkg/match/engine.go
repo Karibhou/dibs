@@ -642,6 +642,12 @@ func (e *Engine) CatalogFingerprint() string {
 // notifications for persisted hive matches. catalogHash is the catalog
 // fingerprint taken before the CNCF set was computed; a catalog that has since
 // changed yields ErrCatalogChanged.
+//
+// matches is merged over the cached hive matches by RepoID: entries for repos
+// in matches are replaced and every other cached entry is kept, so the cache
+// still holds every scored candidate and the next MatchesForIdea neither
+// re-scores nor re-notifies repos the rematch merely ranked below its cap.
+// Repos already cached at or above NotifyThreshold are not notified again.
 func (e *Engine) PersistRematchResults(ideaID string, expectedUpdatedAt time.Time, tldr string, matches []store.Match, cncf []CNCFMatch, catalogHash string) error {
 	if e.Registry != nil {
 		for _, m := range matches {
@@ -654,9 +660,23 @@ func (e *Engine) PersistRematchResults(ideaID string, expectedUpdatedAt time.Tim
 	if e.Catalog != nil && e.CatalogFingerprint() != catalogHash {
 		return ErrCatalogChanged
 	}
+	alreadyNotified := map[string]bool{}
 	updated, committed, err := e.commitIfFresh(ideaID, expectedUpdatedAt, func(i *store.Idea) {
 		i.TLDR = tldr
-		i.Matches = append([]store.Match(nil), matches...)
+		replaced := make(map[string]bool, len(matches))
+		for _, m := range matches {
+			replaced[m.RepoID] = true
+		}
+		merged := append([]store.Match(nil), matches...)
+		for _, old := range i.Matches {
+			if !replaced[old.RepoID] {
+				merged = append(merged, old)
+			}
+			if old.Score >= NotifyThreshold {
+				alreadyNotified[old.RepoID] = true
+			}
+		}
+		i.Matches = merged
 		i.CNCFMatches = append([]CNCFMatch(nil), cncf...)
 		if e.Catalog != nil {
 			i.CNCFCatalogHash = catalogHash
@@ -672,7 +692,7 @@ func (e *Engine) PersistRematchResults(ideaID string, expectedUpdatedAt time.Tim
 	if e.Notifier != nil {
 		var pending []pendingMatch
 		for _, m := range matches {
-			if m.Score < NotifyThreshold {
+			if m.Score < NotifyThreshold || alreadyNotified[m.RepoID] {
 				continue
 			}
 			if rp, err := e.Registry.Get(m.RepoID); err == nil {
