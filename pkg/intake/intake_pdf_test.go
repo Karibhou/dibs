@@ -179,6 +179,28 @@ func TestPDFDeclaredObjectsExceeds(t *testing.T) {
 		{"index with escaped name", []byte("/Ind#65x [1000000000 2]"), true},
 		{"index pair after non-integer ignored", []byte("/Index [0 2 /Foo 1 1000000000 2]"), false},
 		{"index not an array ignored", []byte("/Index 1000000000 2"), false},
+		{"w entry huge", []byte("<< /Type /XRef /W [1 2000000000000 1] >>"), true},
+		{"w small", []byte("<< /Type /XRef /W [1 2 1] >>"), false},
+		{"w sum exceeds", []byte("<< /Type /XRef /W [40 40 40] >>"), true},
+		{"w overflow digits", []byte("<< /Type /XRef /W [1 99999999999999999999 1] >>"), true},
+		{"w negative", []byte("<< /Type /XRef /W [1 -2 1] >>"), true},
+		{"w not an array ignored", []byte("<< /Type /XRef /W 2000000000000 >>"), false},
+		{"w before type", []byte("<< /W [1 2000000000000 1] /Type /XRef >>"), true},
+		{"w after string value", []byte("<< /Type /XRef /ID (>>) /W [1 2000000000000 1] >>"), true},
+		{"w after hex string value", []byte("<< /Type /XRef /ID <3e3e> /W [1 2000000000000 1] >>"), true},
+		{"w after nested dictionary value", []byte("<< /Type /XRef /DecodeParms << /Columns 5 >> /W [1 2000000000000 1] >>"), true},
+		{"w after nested array value", []byte("<< /Type /XRef /Index [0 [1]] /W [1 2000000000000 1] >>"), true},
+		// CIDFont dictionaries use /W for glyph widths, which the reader never
+		// sizes anything from.
+		{"cidfont width ranges", []byte("<< /Type /Font /Subtype /CIDFontType2 /W [40 40 40] >>"), false},
+		{"cidfont first cid above limit", []byte("<< /Type /Font /Subtype /CIDFontType0 /W [100 [500 600 700]] >>"), false},
+		{"cidfont inside xref-typed parent", []byte("<< /Type /XRef /Font << /Type /Font /W [1 2000000000000 1] >> >>"), false},
+		{"xref type in nested dictionary", []byte("<< /Foo << /Type /XRef >> /W [1 2000000000000 1] >>"), false},
+		{"w without dictionary", []byte("/Type /XRef /W [1 2000000000000 1]"), false},
+		{"w after non-name key ignored", []byte("<< /Type /XRef 5 /W [1 2000000000000 1] >>"), false},
+		{"w in string ignored", []byte("<< /Type /XRef /ID (/W [1 2000000000000 1]) >>"), false},
+		{"unterminated escape at eof", []byte("<< /Type /XRef /ID (\\"), false},
+		{"bare unterminated escape at eof", []byte("(\\"), false},
 		{"overlapping candidate sections exhaust budget", pdfOverlappingXrefs(), true},
 	}
 	for _, tc := range cases {
