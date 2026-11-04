@@ -90,3 +90,40 @@ func TestPersistRematchResultsKeepsCachedMatches(t *testing.T) {
 		t.Fatalf("%d extra notifications after rematch", notes.n-notified)
 	}
 }
+
+// TestRematchIdeaColdCachePersistsAllScored: with no prior MatchesForIdea read,
+// a persisted rematch returns only RematchHiveKeep matches but caches every
+// scored repo.
+func TestRematchIdeaColdCachePersistsAllScored(t *testing.T) {
+	st, reg := newFixtures(t)
+	const n = 6
+	repos := make([]registry.RepoProfile, 0, n)
+	for i := 0; i < n; i++ {
+		repos = append(repos, registry.RepoProfile{
+			RepoID:      fmt.Sprintf("org/repo-%02d", i),
+			Owner:       "bob",
+			Description: "kubernetes multicluster scheduling placement",
+			Topics:      []string{"scheduling"},
+		})
+	}
+	if err := reg.Merge(repos); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	e := &Engine{Store: st, Registry: reg}
+	idea := createIdea(t, st, "Kubernetes multicluster scheduling", "Schedule workloads across clusters with placement policies.")
+
+	_, hive, _, err := e.RematchIdea(context.Background(), idea, true, nil)
+	if err != nil {
+		t.Fatalf("RematchIdea: %v", err)
+	}
+	if len(hive) != RematchHiveKeep {
+		t.Fatalf("returned %d matches, want %d", len(hive), RematchHiveKeep)
+	}
+	saved, err := st.Get(idea.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(saved.Matches) != n {
+		t.Fatalf("cache holds %d matches after cold rematch, want %d", len(saved.Matches), n)
+	}
+}

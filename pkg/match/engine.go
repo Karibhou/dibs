@@ -552,9 +552,8 @@ func (e *Engine) RematchIdea(ctx context.Context, idea *store.Idea, persist bool
 		}
 	}
 	sort.SliceStable(matches, func(i, j int) bool { return matches[i].Score > matches[j].Score })
-	if len(matches) > RematchHiveKeep {
-		matches = matches[:RematchHiveKeep]
-	}
+	scored := matches
+	matches = capHiveMatches(scored)
 	cncf, err := e.cncfMatchesForIdea(ctx, &work, false, progress)
 	if err != nil {
 		return "", nil, nil, err
@@ -570,7 +569,7 @@ func (e *Engine) RematchIdea(ctx context.Context, idea *store.Idea, persist bool
 		})
 	}
 	if persist {
-		if err := e.PersistRematchResults(idea.ID, work.UpdatedAt, work.TLDR, matches, cncf, catalogHash); err != nil {
+		if err := e.PersistRematchResults(idea.ID, work.UpdatedAt, work.TLDR, scored, cncf, catalogHash); err != nil {
 			return "", nil, nil, err
 		}
 	}
@@ -578,6 +577,15 @@ func (e *Engine) RematchIdea(ctx context.Context, idea *store.Idea, persist bool
 		progress(ProgressEvent{Phase: "done", Note: "Rematch complete"})
 	}
 	return work.TLDR, matches, cncf, nil
+}
+
+// capHiveMatches trims a ranked hive slice to RematchHiveKeep for return;
+// persistence keeps the full scored slice so the cache never shrinks below it.
+func capHiveMatches(matches []store.Match) []store.Match {
+	if len(matches) > RematchHiveKeep {
+		return matches[:RematchHiveKeep]
+	}
+	return matches
 }
 
 // unchangedSince reports whether the stored idea is still the version that
