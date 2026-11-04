@@ -2,7 +2,10 @@ package intake
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -114,5 +117,117 @@ func TestPDFPageContentExceedsUndecodableStream(t *testing.T) {
 	}
 	if pdfPageContentExceeds(r.Page(1), 1) {
 		t.Fatal("pdfPageContentExceeds = true for an undecodable stream, want false so the page error is reported")
+	}
+}
+
+func TestPDFDeclaredObjectsExceeds(t *testing.T) {
+	t.Parallel()
+	valid := assemblePDF(pdfPageObjects("hi", ""))
+	huge := bytes.Replace(valid, []byte("xref\n0 6\n"), []byte("xref\n1000000000 5\n"), 1)
+	if bytes.Equal(huge, valid) {
+		t.Fatal("fixture did not rewrite the subsection header")
+	}
+	cases := []struct {
+		name string
+		data []byte
+		want bool
+	}{
+		{"valid document", valid, false},
+		{"huge subsection start", huge, true},
+		{"huge subsection count", []byte("xref\n0 1000000000\ntrailer\n"), true},
+		{"subsection count overflows int64", []byte("xref\n0 99999999999999999999999999\ntrailer\n"), true},
+		{"subsection start plus count reaches limit", []byte("xref\n600000 600000\ntrailer\n"), true},
+		{"second xref section is huge", []byte("xref\n0 1\ntrailer\nxref\n1000000000 1\ntrailer\n"), true},
+		{"subsection without trailer", []byte("xref\n0 5\n0000000000 65535 f \n"), false},
+		{"huge subsection without trailer", []byte("xref\n1000000000 5\n"), true},
+		{"xref word in text", []byte("(see the xref table) 7"), false},
+		{"xref keyword at end", []byte("startxref"), false},
+		{"index start huge", []byte("/Type /XRef /Index [1000000000 2] /W [1 2 1]"), true},
+		{"index second pair huge", []byte("/Index [0 2 1000000000 2]"), true},
+		{"index small", []byte("/Index [0 2 10 3]"), false},
+		{"index odd trailing value ignored", []byte("/Index [0 2 99999999]"), false},
+		{"size huge no index", []byte("/Type /XRef /Size 2000000000 /W [1 2 1]"), true},
+		{"size small", []byte("/Type /XRef /Size 10"), false},
+		{"size overflows int64", []byte("/Size 1234567890123456789012345"), true},
+		// The reader tokenizes rather than reading lines: any of its
+		// whitespace bytes separate tokens, % comments are skipped, names
+		// may use #xx escapes and integers may carry a sign.
+		{"subsection header split across lines", []byte("xref\n1000000000\n5\n0000000000 65535 f \ntrailer\n"), true},
+		{"subsection header with CR line endings", []byte("xref\r1000000000 5\r0000000000 65535 f \rtrailer\r"), true},
+		{"subsection header with NUL separators", []byte("xref\x001000000000\x005\x00trailer"), true},
+		{"subsection header with form feed", []byte("xref\f1000000000\f5\ftrailer"), true},
+		{"subsection header after comment", []byte("xref %c\n1000000000 5\ntrailer\n"), true},
+		{"subsection header with comment between tokens", []byte("xref\n1000000000 %c\n5\ntrailer\n"), true},
+		{"subsection start signed", []byte("xref\n+1000000000 5\ntrailer\n"), true},
+		{"huge second subsection", []byte("xref\n0 1\n0000000000 65535 f \n1000000000 1\n0000000000 00000 n \ntrailer\n"), true},
+		{"huge subsection without entries", []byte("xref\n0 1\n1000000000 1\ntrailer\n"), false},
+		{"entry offsets above limit are not headers", []byte("xref\n0 2\n0000000000 65535 f \n0020000000 00000 n \ntrailer\n"), false},
+		{"entry offsets above limit, one token per line", []byte("xref\n0\n1\n2000000\n0\nn\ntrailer\n"), false},
+		{"xref keyword ended by comment delimiter", []byte("xref%c\n1000000000 5"), true},
+		{"xref keyword followed by name is rejected by reader", []byte("xref/1000000000 5"), false},
+		{"xref keyword inside startxref", []byte("startxref\n2000000\n%%EOF\n"), false},
+		{"size with NUL separator", []byte("/Size\x002000000000"), true},
+		{"size after comment", []byte("/Size %c\n2000000000"), true},
+		{"size with escaped name", []byte("/Siz#65 2000000000"), true},
+		{"size signed", []byte("/Size +2000000000"), true},
+		{"size non-integer ignored", []byte("/Size /Foo"), false},
+		{"size inside dictionary delimiters", []byte("<</Size 2000000000>>"), true},
+		{"size with invalid escape is another name", []byte("/Size#zz 2000000000"), false},
+		{"size with escape at end of name", []byte("/Size# 2000000000"), false},
+		{"index with comment inside array", []byte("/Index [0 2 %c\n 1000000000 2]"), true},
+		{"index with NUL separators", []byte("/Index\x00[0\x002\x001000000000\x002]"), true},
+		{"index with escaped name", []byte("/Ind#65x [1000000000 2]"), true},
+		{"index pair after non-integer ignored", []byte("/Index [0 2 /Foo 1 1000000000 2]"), false},
+		{"index not an array ignored", []byte("/Index 1000000000 2"), false},
+		{"overlapping candidate sections exhaust budget", pdfOverlappingXrefs(), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := pdfDeclaredObjectsExceeds(tc.data, maxPDFObjects); got != tc.want {
+				t.Fatalf("pdfDeclaredObjectsExceeds = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// pdfOverlappingXrefs builds input whose every xref keyword, read as the
+// reader would from that offset, parses the same long run of valid entries,
+// so vetting it in full would take time quadratic in its size.
+func pdfOverlappingXrefs() []byte {
+	var b bytes.Buffer
+	b.WriteString("xref 0 4000\n")
+	for range 2000 {
+		b.WriteString("%xref 0 4000\n")
+	}
+	for range 4000 {
+		b.WriteString("0000000000 65535 f \n")
+	}
+	b.WriteString("trailer\n")
+	return b.Bytes()
+}
+
+func TestExtractPDFValidStillExtracts(t *testing.T) {
+	t.Parallel()
+	got, err := ExtractPDF(assemblePDF(pdfPageObjects("hello", "")))
+	if err != nil || !strings.Contains(got, "hello") {
+		t.Fatalf("ExtractPDF = %q, %v; want text containing hello", got, err)
+	}
+}
+
+func TestExtractPDFRejectsHugeDeclaredObjectCount(t *testing.T) {
+	t.Parallel()
+	doc := bytes.Replace(assemblePDF(pdfPageObjects("hi", "")), []byte("xref\n0 6\n"), []byte("xref\n1000000000 5\n"), 1)
+	_, err := ExtractPDF(doc)
+	if err == nil || !strings.Contains(err.Error(), "declares more than") {
+		t.Fatalf("err = %v, want declares more than", err)
+	}
+	_, err = ProcessWithContext(context.Background(), "idea.pdf", "application/pdf", doc)
+	var ie *Error
+	if !errors.As(err, &ie) {
+		t.Fatalf("err = %#v, want *Error", err)
+	}
+	if ie.Status != http.StatusBadRequest || ie.Msg != "could not extract text from document" {
+		t.Fatalf("error = %d %q, want 400 could not extract text from document", ie.Status, ie.Msg)
 	}
 }
