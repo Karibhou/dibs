@@ -429,3 +429,77 @@ func TestExtractPDFBoundsSinglePageDecompressedText(t *testing.T) {
 		t.Fatalf("ExtractPDF allocated %d bytes for a %d-byte upload; single-page decompression is unbounded", allocated, len(pdfBytes))
 	}
 }
+
+// toUnicodeFontPDF returns a one-page document whose only font carries the
+// given ToUnicode CMap as a FlateDecode stream. The font has no /Encoding,
+// which is the branch that makes Font.Encoder parse the CMap, and the page
+// shows the single byte "A" through that font.
+func toUnicodeFontPDF(t *testing.T, cmap []byte) []byte {
+	t.Helper()
+	var z bytes.Buffer
+	zw := zlib.NewWriter(&z)
+	if _, err := zw.Write(cmap); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	comp := z.Bytes()
+	content := "BT /F1 12 Tf 36 100 Td (A) Tj ET\n"
+	return assemblePDF([]string{
+		`<< /Type /Catalog /Pages 2 0 R >>`,
+		`<< /Type /Pages /Kids [3 0 R] /Count 1 >>`,
+		`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>`,
+		`<< /Type /Font /Subtype /TrueType /BaseFont /Helvetica /ToUnicode 6 0 R >>`,
+		fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content),
+		fmt.Sprintf("<< /Length %d /Filter /FlateDecode >>\nstream\n%s\nendstream", len(comp), comp),
+	})
+}
+
+// TestExtractPDFDecodesToUnicodeCMap pins that a legitimate ToUnicode CMap
+// still drives text decoding once the stream is budgeted: the map sends
+// byte 0x41 ("A") to U+0042, so the page must extract as "B".
+func TestExtractPDFDecodesToUnicodeCMap(t *testing.T) {
+	t.Parallel()
+	cmap := []byte("1 begincodespacerange <00> <FF> endcodespacerange\n1 beginbfchar <41> <0042> endbfchar\n")
+	got, err := ExtractPDF(toUnicodeFontPDF(t, cmap))
+	if err != nil {
+		t.Fatalf("ExtractPDF: %v", err)
+	}
+	if !strings.Contains(got, "B") || strings.Contains(got, "A") {
+		t.Fatalf("text = %q, want ToUnicode-mapped %q", got, "B")
+	}
+}
+
+// TestExtractPDFBoundsToUnicodeDecompressedText pins the ToUnicode guard.
+// GetPlainText lexes a font's whole ToUnicode CMap on the first Tf that
+// names the font, one token at a time, with no size limit; a CMap that is
+// one FlateDecode literal string inflating far past maxPDFPageContentBytes
+// must not be materialized. Without the budget in ExtractPDF's font loop
+// this allocates the full decompressed size.
+func TestExtractPDFBoundsToUnicodeDecompressedText(t *testing.T) {
+	t.Parallel()
+	const decompressed = 8 * maxPDFPageContentBytes
+	cmap := append([]byte("begincmap\n("), bytes.Repeat([]byte("A"), decompressed)...)
+	pdfBytes := toUnicodeFontPDF(t, cmap)
+	if len(pdfBytes) > 1<<20 {
+		t.Fatalf("fixture should compress to well under 1 MiB, got %d bytes", len(pdfBytes))
+	}
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	got, err := ExtractPDF(pdfBytes)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatalf("ExtractPDF: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("text = %q, want extraction to stop before the page that needs the bomb font", got)
+	}
+	// The guard discards at most maxPDFPageContentBytes decompressed bytes;
+	// the unbounded path grows one 128 MiB token and copies it into a string.
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 6*maxPDFPageContentBytes {
+		t.Fatalf("ExtractPDF allocated %d bytes for a %d-byte upload; ToUnicode decompression is unbounded", allocated, len(pdfBytes))
+	}
+}

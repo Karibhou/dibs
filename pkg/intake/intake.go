@@ -172,9 +172,12 @@ func ExtractDocument(ext string, data []byte) (string, error) {
 // text before that cap is consulted — so one page whose content stream
 // inflates ~1000:1 is its own OOM bomb (hivecommons/dibs#583). Each page's
 // decompressed content stream is therefore budgeted first, exactly as
-// ExtractDOCX budgets word/document.xml. The parser also panics on
-// malformed input (reader-level entry points have no recover), so panics
-// are converted to ordinary errors here.
+// ExtractDOCX budgets word/document.xml. A font's ToUnicode CMap is the
+// other stream GetPlainText lexes (the first Tf operator naming the font
+// decodes it in full, one token at a time, with no size limit), so it is
+// budgeted the same way before the font is registered. The parser also
+// panics on malformed input (reader-level entry points have no recover),
+// so panics are converted to ordinary errors here.
 func ExtractPDF(data []byte) (text string, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -188,6 +191,7 @@ func ExtractPDF(data []byte) (text string, err error) {
 	fonts := make(map[string]*pdf.Font)
 	var b strings.Builder
 	runes := 0
+pages:
 	for i := 1; i <= r.NumPage(); i++ {
 		p := r.Page(i)
 		if p.V.IsNull() {
@@ -204,6 +208,12 @@ func ExtractPDF(data []byte) (text string, err error) {
 		for _, name := range p.Fonts() {
 			if _, ok := fonts[name]; !ok {
 				f := p.Font(name)
+				// Same bomb, different stream: Font.Encoder lexes the whole
+				// ToUnicode CMap on first use. Stop with what was gathered
+				// so far rather than let GetPlainText inflate it.
+				if pdfStreamExceeds(f.V.Key("ToUnicode"), maxPDFPageContentBytes) {
+					break pages
+				}
 				fonts[name] = &f
 			}
 		}
@@ -220,21 +230,28 @@ func ExtractPDF(data []byte) (text string, err error) {
 }
 
 // pdfPageContentExceeds reports whether the DECOMPRESSED size of page p's
-// content stream(s) exceeds budget. It reads through an io.LimitedReader so
-// a bomb is detected without inflating the whole stream into memory: at most
-// budget+1 decompressed bytes are ever pulled.
+// content stream(s) exceeds budget.
+func pdfPageContentExceeds(p pdf.Page, budget int64) bool {
+	return pdfStreamExceeds(p.V.Key("Contents"), budget)
+}
+
+// pdfStreamExceeds reports whether the DECOMPRESSED size of stream value c
+// (a single stream or an array of streams, as PDF allows for page
+// contents) exceeds budget. It reads through an io.LimitedReader so a bomb
+// is detected without inflating the whole stream into memory: at most
+// budget+1 decompressed bytes are ever pulled. A null or non-stream value
+// is never exceeded.
 //
 // Value.Reader panics on streams it cannot decode (unknown filter, bad
 // zlib header). Those are not bombs: the function reports false and lets
 // GetPlainText, which recovers the same panic into an ordinary error,
 // surface them to the caller as before.
-func pdfPageContentExceeds(p pdf.Page, budget int64) (exceeds bool) {
+func pdfStreamExceeds(c pdf.Value, budget int64) (exceeds bool) {
 	defer func() {
 		if recover() != nil {
 			exceeds = false
 		}
 	}()
-	c := p.V.Key("Contents")
 	var total int64
 	measure := func(v pdf.Value) bool {
 		rc := v.Reader()
