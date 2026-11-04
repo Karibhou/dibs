@@ -9,12 +9,9 @@ import (
 	"github.com/hivecommons/dibs/pkg/store"
 )
 
-// TestPersistRematchResultsKeepsCachedMatches: a persisted rematch carrying
-// fewer matches than the cache merges over it instead of evicting the rest,
-// so the next read re-scores and re-notifies nothing.
-func TestPersistRematchResultsKeepsCachedMatches(t *testing.T) {
-	st, reg := newFixtures(t)
-	const n = 6
+// seedHiveRepos builds n identical repos for test fixtures.
+func seedHiveRepos(t *testing.T, reg *registry.Registry, n int) {
+	t.Helper()
 	repos := make([]registry.RepoProfile, 0, n)
 	for i := 0; i < n; i++ {
 		repos = append(repos, registry.RepoProfile{
@@ -27,6 +24,15 @@ func TestPersistRematchResultsKeepsCachedMatches(t *testing.T) {
 	if err := reg.Merge(repos); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
+}
+
+// TestPersistRematchResultsKeepsCachedMatches: a persisted rematch carrying
+// fewer matches than the cache merges over it instead of evicting the rest,
+// so the next read re-scores and re-notifies nothing.
+func TestPersistRematchResultsKeepsCachedMatches(t *testing.T) {
+	st, reg := newFixtures(t)
+	const n = 6
+	seedHiveRepos(t, reg, n)
 	srv, calls := fakeGateway(t, func(string) string { return `{"score": 80, "reason": "fits"}` })
 	notes := &countingNotifier{}
 	e := &Engine{Store: st, Registry: reg, Notifier: notes, LLM: &LLM{BaseURL: srv.URL + "/v1", Model: "test"}}
@@ -97,18 +103,7 @@ func TestPersistRematchResultsKeepsCachedMatches(t *testing.T) {
 func TestRematchIdeaColdCachePersistsAllScored(t *testing.T) {
 	st, reg := newFixtures(t)
 	const n = 6
-	repos := make([]registry.RepoProfile, 0, n)
-	for i := 0; i < n; i++ {
-		repos = append(repos, registry.RepoProfile{
-			RepoID:      fmt.Sprintf("org/repo-%02d", i),
-			Owner:       "bob",
-			Description: "kubernetes multicluster scheduling placement",
-			Topics:      []string{"scheduling"},
-		})
-	}
-	if err := reg.Merge(repos); err != nil {
-		t.Fatalf("Merge: %v", err)
-	}
+	seedHiveRepos(t, reg, n)
 	e := &Engine{Store: st, Registry: reg}
 	idea := createIdea(t, st, "Kubernetes multicluster scheduling", "Schedule workloads across clusters with placement policies.")
 
