@@ -120,6 +120,67 @@ func TestPDFPageContentExceedsUndecodableStream(t *testing.T) {
 	}
 }
 
+// pdfContentArrayPageObjects returns a one-page document whose /Contents
+// is an array of two separate streams, the form the reader concatenates
+// before interpreting, so a page's text can be split across objects.
+func pdfContentArrayPageObjects(first, second string) []string {
+	return []string{
+		`<< /Type /Catalog /Pages 2 0 R >>`,
+		`<< /Type /Pages /Kids [3 0 R] /Count 1 >>`,
+		`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Resources << /Font << /F1 4 0 R >> >> /Contents [5 0 R 6 0 R] >>`,
+		`<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>`,
+		fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(first), first),
+		fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(second), second),
+	}
+}
+
+// TestPDFPageContentExceedsSumsContentArray pins the /Contents array branch
+// of pdfStreamExceeds. The reader interprets an array of content streams as
+// one concatenated stream, so the budget must apply to their SUM: a bomb
+// split into streams that are each under maxPDFPageContentBytes would
+// otherwise inflate in full. The probe must also stop at the first stream
+// that alone exhausts the budget, and must not trip when the sum fits.
+func TestPDFPageContentExceedsSumsContentArray(t *testing.T) {
+	t.Parallel()
+	first := "BT /F1 12 Tf 36 100 Td (first half) Tj ET\n"
+	second := "BT /F1 12 Tf 36 80 Td (second half) Tj ET\n"
+	doc := assemblePDF(pdfContentArrayPageObjects(first, second))
+	r, err := pdf.NewReader(bytes.NewReader(doc), int64(len(doc)))
+	if err != nil {
+		t.Fatalf("NewReader: %v", err)
+	}
+	page := r.Page(1)
+	if got := page.V.Key("Contents").Kind(); got != pdf.Array {
+		t.Fatalf("fixture /Contents kind = %v, want Array", got)
+	}
+	sum := int64(len(first) + len(second))
+	for _, tc := range []struct {
+		name   string
+		budget int64
+		want   bool
+	}{
+		{"sum fits exactly", sum, false},
+		{"sum exceeds by one byte", sum - 1, true},
+		{"first stream alone exceeds", int64(len(first)) - 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pdfPageContentExceeds(page, tc.budget); got != tc.want {
+				t.Fatalf("pdfPageContentExceeds(budget=%d) = %v, want %v", tc.budget, got, tc.want)
+			}
+		})
+	}
+
+	// A within-budget array page must still extract the text of every
+	// stream, so the guard cannot be satisfied by measuring only the first.
+	got, err := ExtractPDF(doc)
+	if err != nil {
+		t.Fatalf("ExtractPDF: %v", err)
+	}
+	if !strings.Contains(got, "first half") || !strings.Contains(got, "second half") {
+		t.Fatalf("text = %q, want text from both content streams", got)
+	}
+}
+
 func TestPDFDeclaredObjectsExceeds(t *testing.T) {
 	t.Parallel()
 	valid := assemblePDF(pdfPageObjects("hi", ""))
