@@ -90,12 +90,17 @@ func LaunchBody(body string, hiveManaged bool) string {
 
 // LaunchBodyFor is LaunchBody with the IdeaMarker for ideaID appended after
 // the footer (omitted when ideaID is empty). A body that already ends with
-// the footer, with or without a marker, is returned unchanged.
+// the footer keeps that footer; when ideaID is set it still ends with this
+// idea's marker (VerifyFiledIssue needs it for ideators without a GitHub
+// login), replacing a trailing marker that names another idea.
 func LaunchBodyFor(body string, hiveManaged bool, ideaID string) string {
 	body = strings.TrimRight(body, "\n ")
 	bare := stripTrailingMarker(body)
 	if strings.HasSuffix(bare, Footer) || strings.HasSuffix(bare, ExternalFooter) {
-		return body
+		if ideaID == "" || HasIdeaMarker(body, ideaID) {
+			return body
+		}
+		return bare + "\n" + IdeaMarker(ideaID)
 	}
 	return body + footerBlockFor(hiveManaged, ideaID)
 }

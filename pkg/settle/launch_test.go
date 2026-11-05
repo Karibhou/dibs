@@ -51,6 +51,40 @@ func TestLaunchBody(t *testing.T) {
 	}
 }
 
+// TestLaunchBodyForMarkerWithExistingFooter: a body that already ends with
+// the footer still ends with THIS idea's marker when ideaID is set —
+// VerifyFiledIssue needs it for ideators without a GitHub login — and a
+// trailing marker naming another idea is replaced, not kept. A body already
+// carrying the right marker, or launched without an ideaID, is unchanged.
+func TestLaunchBodyForMarkerWithExistingFooter(t *testing.T) {
+	const id = "idea-1"
+	footerOnly := LaunchBody("Body.", true)
+	got := LaunchBodyFor(footerOnly, true, id)
+	if want := footerOnly + "\n" + IdeaMarker(id); got != want {
+		t.Fatalf("marker not appended after an existing footer:\n%q\nwant\n%q", got, want)
+	}
+	if strings.Count(got, Footer) != 1 {
+		t.Fatalf("footer duplicated: %q", got)
+	}
+	if again := LaunchBodyFor(got, true, id); again != got {
+		t.Fatalf("footer+marker must be idempotent:\n%q\nvs\n%q", got, again)
+	}
+	if ext := LaunchBodyFor(LaunchBody("Body.", false), false, id); !strings.HasSuffix(ext, ExternalFooter+"\n"+IdeaMarker(id)) {
+		t.Fatalf("external footer not followed by the marker: %q", ext)
+	}
+	stale := LaunchBodyFor("Body.", true, "other-idea")
+	fixed := LaunchBodyFor(stale, true, id)
+	if !HasIdeaMarker(fixed, id) || HasIdeaMarker(fixed, "other-idea") {
+		t.Fatalf("stale marker not replaced: %q", fixed)
+	}
+	if strings.Count(fixed, markerPrefix) != 1 {
+		t.Fatalf("expected exactly one marker: %q", fixed)
+	}
+	if noID := LaunchBodyFor(footerOnly, true, ""); noID != footerOnly {
+		t.Fatalf("empty ideaID must leave a footered body unchanged: %q", noID)
+	}
+}
+
 // TestNewIssueURLTruncation: an over-budget body is cut to fit, keeps the
 // truncation note + footer, and reports truncated=true so the UI offers
 // copy-to-clipboard of the full text.
