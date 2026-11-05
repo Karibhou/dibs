@@ -29,7 +29,9 @@ Counters are cumulative since process start (never reset), so use `rate` or
 
 Background jobs: `dibs_background_job_runs_total{job,result}` and
 `time() - dibs_background_job_last_success_timestamp_seconds{job}` for
-staleness. LLM outcomes: `dibs_match_llm_calls_total{op,outcome}`.
+staleness. The supplied ServiceMonitor honors the exporter `job` label, so it
+identifies the background job rather than the scrape target. LLM outcomes:
+`dibs_match_llm_calls_total{op,outcome}`.
 
 ## Measuring from logs
 

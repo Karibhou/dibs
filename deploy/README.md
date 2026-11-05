@@ -149,6 +149,11 @@ endpoint is not reachable from the public host. Metrics:
 `dibs_background_job_last_success_timestamp_seconds{job}` and
 `dibs_match_llm_calls_total{op,outcome}`.
 
+The supplied ServiceMonitor honors exporter labels, preserving the background
+job name in `job` rather than renaming it `exported_job` on scrape. Apply the
+same setting to custom scrape configurations so the alerts and dashboard work
+per background job.
+
 `deploy/monitoring/` holds a `ServiceMonitor` and a `PrometheusRule`. They
 need the Prometheus Operator CRDs and are deliberately not part of the apply
 list above:

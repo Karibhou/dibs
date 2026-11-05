@@ -15,4 +15,6 @@ spec:
   endpoints:
     - port: metrics
       path: /metrics
+      # Preserve the exporter's background-job name instead of renaming it exported_job.
+      honorLabels: true
       interval: 30s
