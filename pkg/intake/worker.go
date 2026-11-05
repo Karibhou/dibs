@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"runtime/debug"
 	"strings"
@@ -105,6 +106,14 @@ func extractInWorker(ctx context.Context, exe, ext string, data []byte) (string,
 	stdout := &cappedBuffer{max: maxWorkerOutputBytes()}
 	stderr := &cappedBuffer{max: workerStderrBytes}
 	cmd := exec.CommandContext(ctx, exe, WorkerCommand, ext)
+	// Only upload limits are needed by the worker. An explicitly empty
+	// environment prevents inheriting server secrets and runtime settings.
+	cmd.Env = []string{}
+	for _, key := range []string{"DIBS_INTAKE_MAX_MB", "IDEATE_INTAKE_MAX_MB"} {
+		if value, ok := os.LookupEnv(key); ok {
+			cmd.Env = append(cmd.Env, key+"="+value)
+		}
+	}
 	cmd.Stdin = bytes.NewReader(data)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

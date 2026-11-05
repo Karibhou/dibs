@@ -3,6 +3,7 @@ package intake
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -14,9 +15,14 @@ import (
 	"time"
 )
 
-// testWorkerModeEnv makes the re-exec'd test binary misbehave as a worker
-// instead of running WorkerMain, so failure paths can be exercised.
-const testWorkerModeEnv = "DIBS_INTAKE_TEST_WORKER_MODE"
+// Test modes travel in the document bytes so the production worker does not
+// need to forward a test-only environment variable.
+func testWorkerInput(mode string) []byte { return []byte("test-worker-" + mode) }
+
+type testWorkerEnvironment struct {
+	Env            []string
+	MaxUploadBytes int64
+}
 
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == WorkerCommand {
@@ -28,16 +34,25 @@ func TestMain(m *testing.M) {
 var bombSink [][]byte
 
 func testWorkerMain(args []string) int {
-	switch os.Getenv(testWorkerModeEnv) {
-	case "exit":
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return 1
+	}
+	switch string(data) {
+	case string(testWorkerInput("environment")):
+		if err := json.NewEncoder(os.Stdout).Encode(testWorkerEnvironment{os.Environ(), MaxUploadBytes()}); err != nil {
+			return 1
+		}
+		return 0
+	case string(testWorkerInput("exit")):
 		return 3
-	case "hang":
+	case string(testWorkerInput("hang")):
 		time.Sleep(time.Minute)
 		return 0
-	case "flood":
+	case string(testWorkerInput("flood")):
 		_, _ = os.Stdout.Write(bytes.Repeat([]byte("x"), int(maxWorkerOutputBytes())+1))
 		return 0
-	case "bomb":
+	case string(testWorkerInput("bomb")):
 		// What a decompression bomb does to the parser: keep live memory
 		// growing far past the pod limit. The worker limits must kill it.
 		applyWorkerLimits(workerMemoryLimit, workerDataBudget, os.Stderr)
@@ -47,26 +62,25 @@ func testWorkerMain(args []string) int {
 		_, _ = io.WriteString(os.Stdout, "survived")
 		return 0
 	default:
-		return WorkerMain(args, os.Stdin, os.Stdout, os.Stderr)
+		return WorkerMain(args, bytes.NewReader(data), os.Stdout, os.Stderr)
 	}
 }
 
 // useTestWorker routes extraction through the test binary re-exec'd as the
-// worker, in the given test mode ("" runs the real WorkerMain).
-func useTestWorker(t *testing.T, mode string) {
+// worker. Ordinary document bytes run the real WorkerMain.
+func useTestWorker(t *testing.T) {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatalf("os.Executable: %v", err)
 	}
-	t.Setenv(testWorkerModeEnv, mode)
 	t.Setenv(EnvExtractWorker, "")
 	SetExtractWorker(exe)
 	t.Cleanup(func() { SetExtractWorker("") })
 }
 
 func TestExtractWorkerRoundTrip(t *testing.T) {
-	useTestWorker(t, "")
+	useTestWorker(t)
 	got, err := extractInWorker(context.Background(), *extractWorkerExe.Load(), ".pdf", generatedPDF("Hello PDF idea"))
 	if err != nil || !strings.Contains(got, "Hello PDF idea") {
 		t.Fatalf("extractInWorker = %q, %v; want text containing Hello PDF idea", got, err)
@@ -77,20 +91,83 @@ func TestExtractWorkerRoundTrip(t *testing.T) {
 	}
 }
 
+func TestExtractWorkerEnvironment(t *testing.T) {
+	useTestWorker(t)
+	for _, key := range []string{
+		"DIBS_SESSION_SECRET", "IDEATE_SESSION_SECRET", "AWS_SECRET_ACCESS_KEY",
+		"DIBS_UNKNOWN_SETTING", "DIBS_INTAKE_TEST_WORKER_MODE",
+		"PATH", "HOME", "GODEBUG", "GOMEMLIMIT", "GOMAXPROCS", "LD_PRELOAD",
+	} {
+		t.Setenv(key, "must-not-reach-worker")
+	}
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		mb   int64
+	}{
+		{"unset", nil, DefaultMaxUploadMB},
+		{"empty", map[string]string{"DIBS_INTAKE_MAX_MB": "", "IDEATE_INTAKE_MAX_MB": ""}, DefaultMaxUploadMB},
+		{"primary", map[string]string{"DIBS_INTAKE_MAX_MB": "2"}, 2},
+		{"legacy", map[string]string{"IDEATE_INTAKE_MAX_MB": "3"}, 3},
+		{"precedence", map[string]string{"DIBS_INTAKE_MAX_MB": "2", "IDEATE_INTAKE_MAX_MB": "3"}, 2},
+		{"empty primary", map[string]string{"DIBS_INTAKE_MAX_MB": "", "IDEATE_INTAKE_MAX_MB": "3"}, 3},
+		{"invalid primary", map[string]string{"DIBS_INTAKE_MAX_MB": "invalid", "IDEATE_INTAKE_MAX_MB": "3"}, DefaultMaxUploadMB},
+		{"whitespace primary", map[string]string{"DIBS_INTAKE_MAX_MB": " ", "IDEATE_INTAKE_MAX_MB": "3"}, DefaultMaxUploadMB},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, key := range []string{"DIBS_INTAKE_MAX_MB", "IDEATE_INTAKE_MAX_MB"} {
+				t.Setenv(key, "")
+				if err := os.Unsetenv(key); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+			out, err := extractInWorker(context.Background(), *extractWorkerExe.Load(), ".txt", testWorkerInput("environment"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got testWorkerEnvironment
+			if err := json.Unmarshal([]byte(out), &got); err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Env) != len(tc.env) {
+				t.Fatalf("worker environment has %d entries, want %d", len(got.Env), len(tc.env))
+			}
+			for _, entry := range got.Env {
+				key, value, _ := strings.Cut(entry, "=")
+				if want, ok := tc.env[key]; !ok {
+					t.Fatalf("unexpected worker environment variable %q", key)
+				} else if value != want {
+					t.Fatalf("worker %s = %q, want %q", key, value, want)
+				}
+			}
+			if want := tc.mb << 20; got.MaxUploadBytes != want {
+				t.Fatalf("worker MaxUploadBytes = %d, want %d", got.MaxUploadBytes, want)
+			}
+			text, err := extractInWorker(context.Background(), *extractWorkerExe.Load(), ".txt", []byte("plain idea"))
+			if err != nil || text != "plain idea" {
+				t.Fatalf("extractInWorker = %q, %v; want plain idea", text, err)
+			}
+		})
+	}
+}
+
 func TestExtractWorkerFailureIsExtractionError(t *testing.T) {
 	for _, mode := range []string{"exit", "hang", "flood", "bomb"} {
 		t.Run(mode, func(t *testing.T) {
 			if mode == "bomb" && runtime.GOOS != "linux" {
 				t.Skip("hard data limit is Linux-only")
 			}
-			useTestWorker(t, mode)
+			useTestWorker(t)
 			t.Setenv("DIBS_INTAKE_MAX_MB", "1")
 			if mode == "hang" {
 				old := workerTimeout
 				workerTimeout = 300 * time.Millisecond
 				t.Cleanup(func() { workerTimeout = old })
 			}
-			_, err := ProcessWithContext(context.Background(), "idea.txt", "text/plain", []byte("plain idea"))
+			_, err := ProcessWithContext(context.Background(), "idea.txt", "text/plain", testWorkerInput(mode))
 			var ie *Error
 			if !errors.As(err, &ie) || ie.Status != http.StatusBadRequest || ie.Msg != "could not extract text from document" {
 				t.Fatalf("err = %#v, want 400 could not extract text from document", err)
@@ -100,11 +177,11 @@ func TestExtractWorkerFailureIsExtractionError(t *testing.T) {
 }
 
 func TestExtractWorkerOptOut(t *testing.T) {
-	useTestWorker(t, "exit")
+	useTestWorker(t)
 	for _, v := range []string{"off", "false", "0"} {
 		t.Setenv(EnvExtractWorker, v)
-		resp, err := ProcessWithContext(context.Background(), "idea.txt", "text/plain", []byte("plain idea"))
-		if err != nil || resp.Text != "plain idea" {
+		resp, err := ProcessWithContext(context.Background(), "idea.txt", "text/plain", testWorkerInput("exit"))
+		if err != nil || resp.Text != string(testWorkerInput("exit")) {
 			t.Fatalf("%s=%s: ProcessWithContext = %+v, %v; want in-process extraction", EnvExtractWorker, v, resp, err)
 		}
 	}
