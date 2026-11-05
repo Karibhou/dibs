@@ -79,8 +79,10 @@ type k8sServiceMonitor struct {
 			MatchLabels map[string]string `yaml:"matchLabels"`
 		} `yaml:"selector"`
 		Endpoints []struct {
-			Port string `yaml:"port"`
-			Path string `yaml:"path"`
+			Port        string `yaml:"port"`
+			Path        string `yaml:"path"`
+			Interval    string `yaml:"interval"`
+			HonorLabels bool   `yaml:"honorLabels"`
 		} `yaml:"endpoints"`
 	} `yaml:"spec"`
 }
@@ -267,6 +269,9 @@ func TestServiceMonitorScrapesDeclaredMetricsPort(t *testing.T) {
 		}
 		if ep.Path != "" && ep.Path != "/metrics" {
 			t.Errorf("servicemonitor scrapes %q; MetricsHandler is served at /metrics", ep.Path)
+		}
+		if !ep.HonorLabels {
+			t.Errorf("servicemonitor endpoint does not set honorLabels: true; background-job metrics will lose their job identity")
 		}
 	}
 }

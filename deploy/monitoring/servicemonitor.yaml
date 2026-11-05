@@ -13,6 +13,10 @@ spec:
     matchLabels:
       app: dibs
   endpoints:
+    # The exporter emits dibs_background_job_* metrics with a label named `job` (the background-job name).
+    # `job` is Prometheus's reserved target label. Without honorLabels, Prometheus would rename the
+    # exporter's label to `exported_job`, breaking the sum by (job) alerts and dashboard selectors.
     - port: metrics
       path: /metrics
       interval: 30s
+      honorLabels: true

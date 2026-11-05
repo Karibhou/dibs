@@ -157,6 +157,11 @@ list above:
 kubectl apply -f deploy/monitoring/
 ```
 
+The ServiceMonitor endpoint sets `honorLabels: true` to preserve the `job`
+label from `dibs_background_job_*` metrics, so background-job alerts and
+dashboard panels retain job identity (without it, Prometheus would rewrite
+the exporter's `job` label to `exported_job`).
+
 A Grafana dashboard for the same metrics lives at
 `docs/grafana/dibs-dashboard.json` (import it and pick your Prometheus data
 source; no endpoint is baked in).
