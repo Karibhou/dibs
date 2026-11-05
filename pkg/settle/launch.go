@@ -97,7 +97,7 @@ func LaunchBodyFor(body string, hiveManaged bool, ideaID string) string {
 	body = strings.TrimRight(body, "\n ")
 	bare := stripTrailingMarker(body)
 	if strings.HasSuffix(bare, Footer) || strings.HasSuffix(bare, ExternalFooter) {
-		if ideaID == "" || HasIdeaMarker(body, ideaID) {
+		if ideaID == "" || strings.HasSuffix(body, "\n"+IdeaMarker(ideaID)) {
 			return body
 		}
 		return bare + "\n" + IdeaMarker(ideaID)

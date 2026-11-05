@@ -85,6 +85,37 @@ func TestLaunchBodyForMarkerWithExistingFooter(t *testing.T) {
 	}
 }
 
+// TestLaunchBodyForMarkerInBody: a matching marker in the body must not
+// prevent appending the footer marker or replacing a stale trailing marker.
+func TestLaunchBodyForMarkerInBody(t *testing.T) {
+	const id = "idea-1"
+	for _, tt := range []struct {
+		name        string
+		hiveManaged bool
+		stale       bool
+	}{
+		{"managed/footer-only", true, false},
+		{"managed/stale-marker", true, true},
+		{"external/footer-only", false, false},
+		{"external/stale-marker", false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			bare := LaunchBody("Body.\n"+IdeaMarker(id)+"\nMore text.", tt.hiveManaged)
+			body := bare
+			if tt.stale {
+				body += "\n" + IdeaMarker("other-idea")
+			}
+			got := LaunchBodyFor(body, tt.hiveManaged, id)
+			if want := bare + "\n" + IdeaMarker(id); got != want {
+				t.Fatalf("footer must end with this idea's marker:\n%q\nwant\n%q", got, want)
+			}
+			if again := LaunchBodyFor(got, tt.hiveManaged, id); again != got {
+				t.Fatalf("footer+marker must be idempotent:\n%q\nvs\n%q", got, again)
+			}
+		})
+	}
+}
+
 // TestNewIssueURLTruncation: an over-budget body is cut to fit, keeps the
 // truncation note + footer, and reports truncated=true so the UI offers
 // copy-to-clipboard of the full text.
