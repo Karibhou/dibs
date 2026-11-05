@@ -131,6 +131,32 @@ func TestExtractWorkerWaitsForSlot(t *testing.T) {
 	}
 }
 
+func TestExtractWorkerFailsFastWhenBusy(t *testing.T) {
+	workerSlots <- struct{}{}
+	defer func() { <-workerSlots }()
+	old := workerSlotWait
+	workerSlotWait = 20 * time.Millisecond
+	t.Cleanup(func() { workerSlotWait = old })
+	if _, err := extractInWorker(context.Background(), "/nonexistent/dibs-worker", ".txt", []byte("x")); !errors.Is(err, ErrWorkerBusy) {
+		t.Fatalf("err = %v, want ErrWorkerBusy", err)
+	}
+}
+
+func TestProcessReportsBusyWorkerAs503(t *testing.T) {
+	SetExtractWorker("/nonexistent/dibs-worker")
+	t.Cleanup(func() { SetExtractWorker("") })
+	workerSlots <- struct{}{}
+	defer func() { <-workerSlots }()
+	old := workerSlotWait
+	workerSlotWait = 20 * time.Millisecond
+	t.Cleanup(func() { workerSlotWait = old })
+	_, err := ProcessWithContext(context.Background(), "a.txt", "text/plain", []byte("hello"))
+	var ie *Error
+	if !errors.As(err, &ie) || ie.Status != http.StatusServiceUnavailable {
+		t.Fatalf("err = %v, want 503 Error", err)
+	}
+}
+
 type failingIO struct{}
 
 func (failingIO) Read([]byte) (int, error)  { return 0, errors.New("read failed") }

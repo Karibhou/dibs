@@ -38,6 +38,9 @@ const (
 var (
 	// workerTimeout bounds one extraction worker run.
 	workerTimeout = 30 * time.Second
+	// workerSlotWait bounds how long an upload waits for the worker slot
+	// before failing with ErrWorkerBusy.
+	workerSlotWait = 5 * time.Second
 	// extractWorkerExe is the executable re-exec'd as the extraction worker;
 	// nil or empty means extraction runs in-process.
 	extractWorkerExe atomic.Pointer[string]
@@ -83,11 +86,18 @@ func extractDocument(ctx context.Context, ext string, data []byte) (string, erro
 // legitimately returns more than twice the upload cap.
 func maxWorkerOutputBytes() int64 { return 2 * MaxUploadBytes() }
 
+// ErrWorkerBusy means no extraction worker slot freed up within workerSlotWait.
+var ErrWorkerBusy = errors.New("extraction worker busy")
+
 func extractInWorker(ctx context.Context, exe, ext string, data []byte) (string, error) {
+	wait := time.NewTimer(workerSlotWait)
+	defer wait.Stop()
 	select {
 	case workerSlots <- struct{}{}:
 	case <-ctx.Done():
 		return "", ctx.Err()
+	case <-wait.C:
+		return "", ErrWorkerBusy
 	}
 	defer func() { <-workerSlots }()
 	ctx, cancel := context.WithTimeout(ctx, workerTimeout)

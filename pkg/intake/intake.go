@@ -137,6 +137,9 @@ func ProcessWithContext(ctx context.Context, filename, declaredType string, data
 			return Response{}, &Error{Status: http.StatusUnsupportedMediaType, Msg: "unsupported or mismatched document type"}
 		}
 		text, err := extractDocument(ctx, ext, data)
+		if errors.Is(err, ErrWorkerBusy) {
+			return Response{}, &Error{Status: http.StatusServiceUnavailable, Msg: "intake is busy, retry later"}
+		}
 		if err != nil {
 			return Response{}, &Error{Status: http.StatusBadRequest, Msg: "could not extract text from document"}
 		}
