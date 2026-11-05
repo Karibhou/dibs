@@ -106,6 +106,7 @@ Operator rollout result: /healthz expected version, /readyz, or rollback:
 | `DIBS_ADMINS` | Secret (optional) | unset | Comma-separated, case-insensitive GitHub logins granted admin access (idea-moderation endpoints) |
 | `DIBS_CLANKER_MARKERS` | ConfigMap (optional) | `hive: agent=,kubestellar-hive[bot]` | Comma-separated, case-insensitive markers matched against PR branch/labels/body/author to classify agent activity |
 | `DIBS_INTAKE_MAX_MB` | ConfigMap (optional) | `25` | Max upload size (MB) accepted for idea-intake file uploads |
+| `DIBS_INTAKE_EXTRACT_WORKER` | ConfigMap (optional) | _(on)_ | Set to `off` to extract uploaded documents in-process instead of in a memory-limited, time-limited child worker (not recommended) |
 | `DIBS_STT_URL` | Secret (optional) | unset | Speech-to-text gateway; unset ⇒ voice/audio idea submission disabled |
 | `DIBS_STT_KEY` | Secret (optional) | unset | API key for the STT gateway |
 | `DIBS_STT_MODEL` | Secret (optional) | unset | Model name routed by the STT gateway |

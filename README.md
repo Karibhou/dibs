@@ -117,6 +117,7 @@ deployments also work.
 | `DIBS_ADMINS` | (unset) | Comma-separated, case-insensitive GitHub logins granted admin access (idea-moderation endpoints) |
 | `DIBS_CLANKER_MARKERS` | `hive: agent=,kubestellar-hive[bot]` | Comma-separated, case-insensitive markers matched against PR branch/labels/body/author to classify agent activity |
 | `DIBS_INTAKE_MAX_MB` | `25` | Max upload size (MB) accepted for idea-intake file uploads |
+| `DIBS_INTAKE_EXTRACT_WORKER` | _(on)_ | Set to `off` to extract uploaded documents in-process instead of in a memory-limited, time-limited child worker (not recommended: crafted documents can then exhaust the server's memory) |
 | `DIBS_STT_URL` | (unset) | Speech-to-text gateway URL; when set, enables voice/audio idea submission |
 | `DIBS_STT_KEY` | (unset) | API key for the STT gateway |
 | `DIBS_STT_MODEL` | (unset) | Model name routed by the STT gateway |

@@ -23,6 +23,7 @@ import (
 	"github.com/hivecommons/dibs/pkg/deps"
 	"github.com/hivecommons/dibs/pkg/envutil"
 	"github.com/hivecommons/dibs/pkg/history"
+	"github.com/hivecommons/dibs/pkg/intake"
 	"github.com/hivecommons/dibs/pkg/match"
 	"github.com/hivecommons/dibs/pkg/news"
 	"github.com/hivecommons/dibs/pkg/notify"
@@ -84,9 +85,17 @@ func displayBasePath(base string) string {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == intake.WorkerCommand {
+		os.Exit(intake.WorkerMain(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
+	if exe, err := os.Executable(); err == nil {
+		intake.SetExtractWorker(exe)
+	} else {
+		slog.Warn("intake extraction worker disabled", "err", err)
+	}
 	err := run(os.Args[1:], os.Stdout, os.Stderr, func(srv *http.Server) error {
 		return serveUntil(ctx, srv, shutdownTimeout)
 	})
