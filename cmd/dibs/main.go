@@ -64,6 +64,17 @@ func githubTokenFromEnv() string {
 	return strings.TrimSpace(envOr(settle.EnvGitHubToken, ""))
 }
 
+// hubURLFromEnv returns HUB_URL as a bare origin: surrounding whitespace and
+// trailing slashes removed, so the hub clients' BaseURL+path concatenation
+// never yields "//api/..." when the operator configured "https://hub/".
+func hubURLFromEnv() string {
+	u := strings.TrimSpace(envOr("HUB_URL", defaultHubURL))
+	if u == "" {
+		u = defaultHubURL
+	}
+	return strings.TrimRight(u, "/")
+}
+
 // listenMetrics serves the Prometheus /metrics endpoint on addr until it
 // fails. It is a separate listener so ingress, which only targets the
 // application port, can never expose it.
@@ -152,7 +163,7 @@ func run(args []string, stdout, stderr io.Writer, serve func(*http.Server) error
 
 	addr := envOr("DIBS_ADDR", defaultAddr)
 	basePath := server.NormalizeBasePath(envOr("DIBS_BASE_PATH", server.DefaultBasePath))
-	hubURL := envOr("HUB_URL", defaultHubURL)
+	hubURL := hubURLFromEnv()
 	dataDir := envOr("DATA_DIR", defaultDataDir)
 
 	st, err := store.New(dataDir)
