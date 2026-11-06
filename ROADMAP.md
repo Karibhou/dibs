@@ -13,6 +13,12 @@ the project is headed next.
   and recovery when an uploaded document is malformed.
 - Repository registry, credit-wall mechanics, notifications, and guided server
   flows covered by automated tests.
+- A remote MCP endpoint at `https://dibs.hivecommons.dev/mcp`, so coding agents
+  can submit and track ideas (`submit_idea`, `list_my_ideas`, `get_idea`,
+  `list_repos`) and run the `recall_ideas` prompt. It is listed in the official
+  MCP Registry as `dev.hivecommons/dibs`; see
+  [Submit ideas from your agent](README.md#submit-ideas-from-your-agent) and
+  [MCP Registry publishing](docs/mcp-registry.md).
 
 ## Near term
 
