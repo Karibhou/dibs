@@ -227,6 +227,7 @@ func TestPDFDeclaredObjectsExceeds(t *testing.T) {
 		{"xref keyword ended by comment delimiter", []byte("xref%c\n1000000000 5"), true},
 		{"xref keyword followed by name is rejected by reader", []byte("xref/1000000000 5"), false},
 		{"xref keyword inside startxref", []byte("startxref\n2000000\n%%EOF\n"), false},
+		{"xref keyword prefix of a longer word", []byte("xrefs\n1000000000 5\ntrailer\n"), false},
 		{"size with NUL separator", []byte("/Size\x002000000000"), true},
 		{"size after comment", []byte("/Size %c\n2000000000"), true},
 		{"size with escaped name", []byte("/Siz#65 2000000000"), true},
@@ -251,6 +252,10 @@ func TestPDFDeclaredObjectsExceeds(t *testing.T) {
 		{"w after hex string value", []byte("<< /Type /XRef /ID <3e3e> /W [1 2000000000000 1] >>"), true},
 		{"w after nested dictionary value", []byte("<< /Type /XRef /DecodeParms << /Columns 5 >> /W [1 2000000000000 1] >>"), true},
 		{"w after nested array value", []byte("<< /Type /XRef /Index [0 [1]] /W [1 2000000000000 1] >>"), true},
+		// A nested value cut off by end of input must end the skip rather
+		// than spin on the exhausted scanner.
+		{"nested array value truncated at eof", []byte("<< /Type /XRef /Index [0 [1"), false},
+		{"nested dictionary value truncated at eof", []byte("<< /Type /XRef /DecodeParms << /Columns << 5"), false},
 		// CIDFont dictionaries use /W for glyph widths, which the reader never
 		// sizes anything from.
 		{"cidfont width ranges", []byte("<< /Type /Font /Subtype /CIDFontType2 /W [40 40 40] >>"), false},
