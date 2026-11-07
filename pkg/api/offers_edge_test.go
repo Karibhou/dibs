@@ -509,3 +509,58 @@ func TestDecidePassRejectsPendingOffer(t *testing.T) {
 		t.Fatalf("decline: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestAcceptRefusesIdeaAimedAtExternalRepo(t *testing.T) {
+	now := time.Date(2026, 9, 28, 11, 0, 0, 0, time.UTC)
+	withFixedNow(t, now)
+	a, mux := newAPIFixture(t)
+	idea := mustCreate(t, a, "bob", "Aimed externally", store.VisibilityPublic, store.StatusDraft)
+
+	rec := do(t, mux, ident("bob"), "POST", "/api/ideas/"+idea.ID+"/offer", `{"repoID":"outside/project"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("external offer: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = do(t, mux, ident("alice"), "GET", "/api/repos/kubestellar/dibs/feed", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("feed: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	feed := decodeBody[struct {
+		Candidates []matchView `json:"candidates"`
+	}](t, rec)
+	for _, c := range feed.Candidates {
+		if c.Idea != nil && c.Idea.ID == idea.ID {
+			t.Fatalf("aimed idea listed as candidate: %+v", c.Idea)
+		}
+	}
+
+	decide := `{"ideaID":"` + idea.ID + `","decision":"accept"}`
+	rec = do(t, mux, ident("alice"), "POST", "/api/repos/kubestellar/dibs/decide", decide)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "already aimed at outside/project") {
+		t.Fatalf("candidate accept: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err := a.Store.Get(idea.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if stored.TargetRepo != "outside/project" || stored.Status != store.StatusOffered {
+		t.Fatalf("state changed: %+v", stored)
+	}
+
+	// The ideator's explicit offer to the registered repo is a re-aim.
+	rec = do(t, mux, ident("bob"), "POST", "/api/ideas/"+idea.ID+"/offer", `{"repoID":"kubestellar/dibs"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("offer to registered repo: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, mux, ident("alice"), "POST", "/api/repos/kubestellar/dibs/decide", decide)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("accept pending offer: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err = a.Store.Get(idea.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if stored.TargetRepo != "kubestellar/dibs" || stored.Status != store.StatusAccepted {
+		t.Fatalf("after re-aim accept: %+v", stored)
+	}
+}

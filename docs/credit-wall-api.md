@@ -179,7 +179,8 @@ Private ideas require an offer to that repository; decline requires a pending
 offer. Pass applies only to non-offered public candidates: when the idea has a
 pending offer to this repository, `pass` returns 400 and the offer must be
 declined instead. Accept sets `targetRepo` and moves an available idea to
-`accepted`.
+`accepted`. Accept refuses (400) a candidate whose `targetRepo` is already set
+to another repo; a pending offer to this repository still accepts.
 
 Response shapes:
 

@@ -329,6 +329,9 @@ func (a *API) handleRepoFeed(w http.ResponseWriter, r *http.Request) {
 		if rp.HasPassed(idea.ID) || idea.OfferTo(rp.RepoID) != nil {
 			continue // swiped away, or already in the offers list
 		}
+		if idea.TargetRepo != "" {
+			continue // the ideator already aimed it at a repo
+		}
 		candidates = append(candidates, a.repoView(r.Context(), idea, rp))
 	}
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Score > candidates[j].Score })
@@ -457,6 +460,10 @@ func (a *API) accept(w http.ResponseWriter, r *http.Request, idea *store.Idea, r
 		// idea and overwrite TargetRepo.
 		if i.Status == store.StatusAccepted {
 			return &store.ValidationError{Msg: "cannot accept an idea in status " + i.Status}
+		}
+		// A candidate accept must not override the ideator's chosen target.
+		if i.OfferTo(rp.RepoID) == nil && i.TargetRepo != "" && !strings.EqualFold(i.TargetRepo, rp.RepoID) {
+			return &store.ValidationError{Msg: "idea is already aimed at " + i.TargetRepo}
 		}
 		if err := i.TransitionTo(store.StatusAccepted, "accept"); err != nil {
 			return err
