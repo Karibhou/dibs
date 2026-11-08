@@ -53,7 +53,18 @@ const (
 	// files use widths of a few bytes.
 	maxPDFXrefFieldWidth = 64
 	sttTimeout           = 60 * time.Second
+	// DefaultUploadReadTimeout bounds how long HandleUpload waits for the
+	// whole multipart body. MaxBytesReader caps the bytes, not the time: a
+	// client that trickles a 26 MiB body one byte at a time would otherwise
+	// hold the handler open indefinitely. Five minutes is generous for the
+	// cap on a slow link (~700 kbit/s) and hopeless for a trickle. The
+	// http.Server deliberately has no global ReadTimeout because /mcp
+	// streams SSE, so this route bounds its own read.
+	DefaultUploadReadTimeout = 5 * time.Minute
 )
+
+// uploadReadTimeout is DefaultUploadReadTimeout unless a test shortens it.
+var uploadReadTimeout = DefaultUploadReadTimeout
 
 var (
 	DocumentExts = map[string]bool{".txt": true, ".md": true, ".html": true, ".htm": true, ".pdf": true, ".docx": true, ".rtf": true}
@@ -91,6 +102,11 @@ func HandleConfig(w http.ResponseWriter, r *http.Request) {
 
 func HandleUpload(w http.ResponseWriter, r *http.Request) {
 	limit := MaxUploadBytes()
+	// ErrNotSupported (httptest.ResponseRecorder, wrappers without Unwrap)
+	// only means the deadline cannot be applied here; the byte cap below
+	// still holds, so the upload proceeds unbounded in time rather than
+	// failing.
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(uploadReadTimeout))
 	r.Body = http.MaxBytesReader(w, r.Body, limit+1024*1024)
 	if err := r.ParseMultipartForm(limit); err != nil {
 		var mbe *http.MaxBytesError

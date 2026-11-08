@@ -50,7 +50,30 @@ const (
 	// shutdownTimeout stays under the Kubernetes default 30s termination
 	// grace period.
 	shutdownTimeout = 20 * time.Second
+	// readHeaderTimeout bounds how long a connection may take to send its
+	// request line and headers; idleTimeout bounds how long a keep-alive
+	// connection may sit between requests. Without the latter an idle
+	// client holds a goroutine and a file descriptor for as long as it
+	// stays connected.
+	readHeaderTimeout = 10 * time.Second
+	idleTimeout       = 120 * time.Second
 )
+
+// newHTTPServer is the one place both listeners get their connection
+// timeouts, so neither can lose them. ReadTimeout and WriteTimeout are
+// deliberately left unset: /mcp serves long-lived Streamable HTTP (SSE)
+// responses, and Go cancels the request context when a server-wide
+// ReadTimeout expires mid-handler, which would cut every MCP stream off at
+// the deadline. Routes that read a large body bound that read themselves
+// (see intake.HandleUpload).
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: readHeaderTimeout,
+		IdleTimeout:       idleTimeout,
+	}
+}
 
 // envOr reads key, honoring the legacy IDEATE_-prefixed name (the product's
 // pre-rename env prefix) as a fallback before the default.
@@ -79,11 +102,7 @@ func hubURLFromEnv() string {
 // fails. It is a separate listener so ingress, which only targets the
 // application port, can never expose it.
 func listenMetrics(addr string) error {
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           server.MetricsHandler(),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	srv := newHTTPServer(addr, server.MetricsHandler())
 	return srv.ListenAndServe()
 }
 
@@ -288,11 +307,7 @@ func run(args []string, stdout, stderr io.Writer, serve func(*http.Server) error
 	}
 
 	slog.Info("listening", "version", gitShort, "addr", addr, "base_path", displayBasePath(basePath), "hub", hubURL, "data_dir", dataDir)
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           handler,
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	srv := newHTTPServer(addr, handler)
 	if err := serve(srv); err != nil {
 		return fmt.Errorf("server: %w", err)
 	}

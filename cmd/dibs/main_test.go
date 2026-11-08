@@ -467,3 +467,36 @@ func TestRunCancelsRegistrySyncOnReturn(t *testing.T) {
 		t.Fatal("hub request not cancelled after run returned")
 	}
 }
+
+// TestNewHTTPServerTimeouts pins the connection timeouts both listeners
+// share. IdleTimeout is what reaps keep-alive connections that never send
+// another request; ReadTimeout and WriteTimeout must stay unset because a
+// server-wide read deadline cancels in-flight /mcp SSE handlers.
+func TestNewHTTPServerTimeouts(t *testing.T) {
+	srv := newHTTPServer(":0", http.NotFoundHandler())
+	if srv.Addr != ":0" || srv.Handler == nil {
+		t.Fatalf("server = %+v, want Addr :0 with handler", srv)
+	}
+	if srv.ReadHeaderTimeout != readHeaderTimeout {
+		t.Fatalf("ReadHeaderTimeout = %v, want %v", srv.ReadHeaderTimeout, readHeaderTimeout)
+	}
+	if srv.IdleTimeout != idleTimeout {
+		t.Fatalf("IdleTimeout = %v, want %v", srv.IdleTimeout, idleTimeout)
+	}
+	if srv.ReadTimeout != 0 || srv.WriteTimeout != 0 {
+		t.Fatalf("ReadTimeout/WriteTimeout = %v/%v, want both unset (would cancel /mcp SSE streams)", srv.ReadTimeout, srv.WriteTimeout)
+	}
+}
+
+// TestRunServerIdleTimeout checks run wires the application listener
+// through newHTTPServer rather than building a bare http.Server.
+func TestRunServerIdleTimeout(t *testing.T) {
+	setupEnv(t, t.TempDir())
+	var srv *http.Server
+	if err := run(nil, io.Discard, io.Discard, testServe(&srv, nil)); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if srv.IdleTimeout != idleTimeout || srv.ReadHeaderTimeout != readHeaderTimeout {
+		t.Fatalf("IdleTimeout/ReadHeaderTimeout = %v/%v, want %v/%v", srv.IdleTimeout, srv.ReadHeaderTimeout, idleTimeout, readHeaderTimeout)
+	}
+}
