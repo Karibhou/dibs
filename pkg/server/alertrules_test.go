@@ -110,6 +110,9 @@ func scrapeAllFamilies(t *testing.T) exposition {
 	t.Helper()
 	reqStats.record("GET", routeGroup("", "/readyz"), http.StatusInternalServerError, time.Millisecond)
 	reqStats.record("GET", routeGroup("", "/api/ideas"), http.StatusOK, time.Millisecond)
+	// Every job needs one success so the last-success gauge carries every
+	// job value the stale alert selects on; the failure feeds result="error".
+	RecordJob(JobCatalogRefresh, nil)
 	RecordJob(JobCatalogRefresh, errors.New("boom"))
 	RecordJob(JobRegistrySync, nil)
 

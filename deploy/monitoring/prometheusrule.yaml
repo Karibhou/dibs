@@ -55,14 +55,20 @@ spec:
           annotations:
             runbook_url: https://github.com/hivecommons/dibs/blob/main/runbooks/incident-response.md#5-background-job-alerts
             summary: Dibs background job {{ $labels.job }} is failing.
+        # Thresholds are per job: registry_sync runs every registrySyncInterval
+        # (5m, cmd/dibs/main.go) and catalog_refresh every catalog.RefreshInterval
+        # (7d). A skipped weekly refresh does not update the last-success gauge.
         - alert: DibsBackgroundJobStale
-          expr: time() - dibs_background_job_last_success_timestamp_seconds > 3600
+          expr: |
+            (time() - dibs_background_job_last_success_timestamp_seconds{job="registry_sync"} > 3600)
+              or
+            (time() - dibs_background_job_last_success_timestamp_seconds{job="catalog_refresh"} > 8 * 24 * 3600)
           for: 5m
           labels:
             severity: warning
           annotations:
             runbook_url: https://github.com/hivecommons/dibs/blob/main/runbooks/incident-response.md#5-background-job-alerts
-            summary: Dibs background job {{ $labels.job }} has not succeeded for over an hour.
+            summary: Dibs background job {{ $labels.job }} has not succeeded within its staleness threshold (1h for registry_sync, 8d for catalog_refresh).
         - alert: DibsMatchLLMErrorRatio
           expr: |
             sum by (op) (increase(dibs_match_llm_calls_total{outcome="llm_error"}[30m]))

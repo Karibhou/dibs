@@ -45,7 +45,9 @@ each action taken with its time. Update it whenever the state changes.
 For `DibsBackgroundJobFailing` and `DibsBackgroundJobStale`. These jobs do not
 affect `/readyz`, so the service can look healthy while they fail.
 
-1. Identify the job from the alert's `job` label.
+1. Identify the job from the alert's `job` label. "Stale" is per job:
+   `registry_sync` runs every 5 minutes and alerts after 1h; `catalog_refresh`
+   runs weekly and alerts after 8 days.
 2. Find its errors: `kubectl -n dibs logs deploy/dibs --since=2h | grep -i '"job"'`.
 3. Check counters: `dibs_background_job_runs_total{job="<job>",result="error"}`
    and `time() - dibs_background_job_last_success_timestamp_seconds{job="<job>"}`.
