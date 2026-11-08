@@ -381,7 +381,7 @@ Dibs is part of [Hive Commons](https://hivecommons.dev), a family of tools for w
 - Want to contribute? See [CONTRIBUTING.md](CONTRIBUTING.md) for DCO sign-off, the CI and coverage gates, and code conventions.
 - Found a bug? Open a [bug report](https://github.com/hivecommons/dibs/issues/new?template=bug_report.yml). Have an idea for Dibs itself? Open a [feature request](https://github.com/hivecommons/dibs/issues/new?template=feature_request.yml).
 - Reporting a security vulnerability? Follow [SECURITY.md](SECURITY.md) to report it privately, not through public issues.
-- Questions? Join the [Hive Commons Discord](https://hivecommons.dev/discord), or watch the hive live on [Twitch](https://www.twitch.tv/hivecommons).
+- Questions? Join the [Hive Commons Discord](https://hivecommons.dev/discord), or watch the hive live on [Twitch](https://www.twitch.tv/hivecommons). To talk to the maintainers live, join the biweekly [Hive Commons community meeting](https://docs.hivecommons.dev/docs/community/meetings).
 - Please follow the [Hive Commons Code of Conduct](https://github.com/hivecommons/.github/blob/main/CODE_OF_CONDUCT.md).
 
 ## License
