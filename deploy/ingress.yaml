@@ -21,6 +21,12 @@ metadata:
     # The /mcp Streamable HTTP endpoint may return SSE responses; avoid
     # buffering streaming tool responses behind ingress-nginx.
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # Idea-intake uploads (PDF/DOCX/audio) are capped by dibs at
+    # DIBS_INTAKE_MAX_MB (default 25 MB) plus 1 MiB of multipart slack.
+    # ingress-nginx's default client_max_body_size is 1m, which would 413
+    # those uploads before dibs sees them; keep this a little above the app
+    # cap and raise it together with DIBS_INTAKE_MAX_MB.
+    nginx.ingress.kubernetes.io/proxy-body-size: "30m"
 spec:
   ingressClassName: nginx
   tls:
