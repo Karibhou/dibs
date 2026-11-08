@@ -9,6 +9,7 @@ package api
 import (
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/dibs/pkg/game"
@@ -119,17 +120,22 @@ func (a *API) HandleLeaderboard(w http.ResponseWriter, r *http.Request) {
 	}
 	byAuthor := map[string][]*store.Idea{}
 	display := map[string]string{}
+	handle := map[string]string{}
 	settledAuthors := map[string]bool{}
 	for _, idea := range all {
-		byAuthor[idea.Author] = append(byAuthor[idea.Author], idea)
-		display[idea.Author] = idea.AuthorDisplay
+		key := strings.ToLower(idea.Author)
+		byAuthor[key] = append(byAuthor[key], idea)
+		display[key] = idea.AuthorDisplay
+		if _, ok := handle[key]; !ok {
+			handle[key] = idea.Author
+		}
 		if idea.Status == store.StatusSettled {
-			settledAuthors[idea.Author] = true
+			settledAuthors[key] = true
 		}
 	}
 	entries := []LeaderboardEntry{}
-	for author := range settledAuthors {
-		ideas := byAuthor[author]
+	for key := range settledAuthors {
+		ideas := byAuthor[key]
 		score := game.Score(ideas)
 		level, _ := game.LevelFor(score)
 		settled := 0
@@ -139,8 +145,8 @@ func (a *API) HandleLeaderboard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		entries = append(entries, LeaderboardEntry{
-			Author:        author,
-			AuthorDisplay: display[author],
+			Author:        handle[key],
+			AuthorDisplay: display[key],
 			Score:         score,
 			Level:         level,
 			Settled:       settled,

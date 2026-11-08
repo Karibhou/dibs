@@ -12,6 +12,7 @@ package api
 import (
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/dibs/pkg/store"
@@ -212,7 +213,7 @@ func (a *API) HandleStats(w http.ResponseWriter, r *http.Request) {
 		case store.StatusSettled:
 			st.Matched++
 			st.Shipped++
-			settledAuthors[idea.Author] = true
+			settledAuthors[strings.ToLower(idea.Author)] = true
 		}
 	}
 	st.Ideators = len(settledAuthors)

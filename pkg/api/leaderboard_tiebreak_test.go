@@ -54,3 +54,47 @@ func TestLeaderboardTiebreaksOnSettledCount(t *testing.T) {
 		t.Fatalf("rank 2 = %+v, want amy with 1 settled", got[1])
 	}
 }
+
+// TestLeaderboardFoldsAuthorLoginCase checks one ideator whose settled ideas
+// are stored under differently cased logins gets a single, summed row.
+func TestLeaderboardFoldsAuthorLoginCase(t *testing.T) {
+	a, _ := newAPIFixture(t)
+
+	mustCreate(t, a, "Alice", "alice one", store.VisibilityPublic, store.StatusSettled)
+	mustCreate(t, a, "alice", "alice two", store.VisibilityPublic, store.StatusSettled)
+
+	rec := httptest.NewRecorder()
+	a.HandleLeaderboard(rec, httptest.NewRequest("GET", "/api/leaderboard", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	got := decodeBody[struct {
+		Leaderboard []LeaderboardEntry `json:"leaderboard"`
+	}](t, rec).Leaderboard
+	if len(got) != 1 {
+		t.Fatalf("leaderboard = %+v, want 1 entry", got)
+	}
+	want := 2 * game.IdeaPoints(&store.Idea{Status: store.StatusSettled})
+	if got[0].Settled != 2 || got[0].Score != want {
+		t.Fatalf("entry = %+v, want 2 settled with score %d", got[0], want)
+	}
+}
+
+// TestStatsFoldsAuthorLoginCase checks the market stats count one ideator
+// once regardless of login spelling.
+func TestStatsFoldsAuthorLoginCase(t *testing.T) {
+	a, _ := newAPIFixture(t)
+
+	mustCreate(t, a, "Alice", "alice one", store.VisibilityPublic, store.StatusSettled)
+	mustCreate(t, a, "alice", "alice two", store.VisibilityPublic, store.StatusSettled)
+
+	rec := httptest.NewRecorder()
+	a.HandleStats(rec, httptest.NewRequest("GET", "/api/stats", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	got := decodeBody[MarketStats](t, rec)
+	if got.Ideators != 1 {
+		t.Fatalf("ideators = %d, want 1", got.Ideators)
+	}
+}
