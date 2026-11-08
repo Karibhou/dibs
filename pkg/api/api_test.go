@@ -673,3 +673,11 @@ func TestUpdateRepo(t *testing.T) {
 		t.Fatalf("unknown repo: %d, want 404", rec.Code)
 	}
 }
+
+func TestGetIdeaAuthorMatchIsCaseInsensitive(t *testing.T) {
+	a, mux := newAPIFixture(t)
+	private := mustCreate(t, a, "Alice", "Secret plan", store.VisibilityPrivate, store.StatusDraft)
+	if rec := do(t, mux, ident("aLICE"), "GET", "/api/ideas/"+private.ID, ""); rec.Code != http.StatusOK {
+		t.Fatalf("author with different login case: %d, want 200", rec.Code)
+	}
+}

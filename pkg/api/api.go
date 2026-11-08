@@ -99,7 +99,7 @@ func firstNonEmpty(values ...string) string {
 
 func ideaForViewer(idea *store.Idea, viewer string) *store.Idea {
 	cp := *idea
-	if cp.Author != viewer {
+	if !strings.EqualFold(cp.Author, viewer) {
 		cp.SuggestionsSeenAt = time.Time{}
 	}
 	return &cp
@@ -497,7 +497,7 @@ func (a *API) loadAuthorized(w http.ResponseWriter, r *http.Request, mustOwn boo
 		writeError(w, status, msg)
 		return nil
 	}
-	if idea.Author == id.Username {
+	if strings.EqualFold(idea.Author, id.Username) {
 		return idea
 	}
 	if !mustOwn && idea.Visibility == store.VisibilityPublic {
@@ -540,7 +540,7 @@ func (a *API) handleGetIdea(w http.ResponseWriter, r *http.Request) {
 // repos the viewer owns.
 func (a *API) publicIdeaView(idea *store.Idea, viewer string) *store.Idea {
 	cp := ideaForViewer(idea, viewer)
-	if cp.Author == viewer {
+	if strings.EqualFold(cp.Author, viewer) {
 		return cp
 	}
 	cp.Matches = nil

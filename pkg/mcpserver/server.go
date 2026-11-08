@@ -310,7 +310,7 @@ func (t *tools) getIdea(ctx context.Context, req *mcpsdk.CallToolRequest, in get
 	}
 	id, authErr := t.identity(ctx, req)
 	if idea.Visibility != store.VisibilityPublic {
-		if authErr != nil || id == nil || (idea.Author != id.Username && !t.offeredToViewerRepo(idea.Offers, id.Username)) {
+		if authErr != nil || id == nil || (!strings.EqualFold(idea.Author, id.Username) && !t.offeredToViewerRepo(idea.Offers, id.Username)) {
 			return nil, getIdeaOutput{}, store.ErrNotFound
 		}
 	}
@@ -319,7 +319,7 @@ func (t *tools) getIdea(ctx context.Context, req *mcpsdk.CallToolRequest, in get
 		viewer = id.Username
 	}
 	matches, offers := match.CapMatches(idea.Matches), idea.Offers
-	if idea.Author != viewer {
+	if !strings.EqualFold(idea.Author, viewer) {
 		matches, offers = nil, t.offersForViewer(idea.Offers, viewer)
 	}
 	return nil, getIdeaOutput{

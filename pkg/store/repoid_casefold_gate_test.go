@@ -244,7 +244,7 @@ func casefoldIdentifier(e ast.Expr) bool {
 
 func casefoldName(name string) bool {
 	switch name {
-	case "RepoID", "TargetRepo", "Owner", "User", "Login", "repoID", "owner", "user", "login":
+	case "RepoID", "TargetRepo", "Owner", "User", "Login", "Author", "Username", "repoID", "owner", "user", "login", "author", "viewer":
 		return true
 	}
 	return false

@@ -305,3 +305,14 @@ func TestPingWriteProbeThrottled(t *testing.T) {
 		t.Fatal("Ping past the probe interval should re-run the write probe and fail on a read-only dir")
 	}
 }
+
+func TestListByAuthorIsCaseInsensitive(t *testing.T) {
+	s, _ := newTestStore(t)
+	if err := s.Create(validIdea("Alice")); err != nil {
+		t.Fatal(err)
+	}
+	ideas, err := s.ListByAuthor("aLiCe")
+	if err != nil || len(ideas) != 1 {
+		t.Fatalf("ListByAuthor(mixed case) = %d, %v; want 1", len(ideas), err)
+	}
+}

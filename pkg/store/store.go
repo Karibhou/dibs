@@ -741,7 +741,7 @@ func (s *Store) Delete(id string) error {
 // ListByAuthor returns every idea (any visibility) owned by author, newest
 // first.
 func (s *Store) ListByAuthor(author string) ([]*Idea, error) {
-	return s.list(func(e indexEntry) bool { return e.Author == author })
+	return s.list(func(e indexEntry) bool { return strings.EqualFold(e.Author, author) })
 }
 
 // ListPublic returns every PUBLIC idea, newest first. Private ideas are
