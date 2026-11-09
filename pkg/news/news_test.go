@@ -363,6 +363,67 @@ func TestRefreshKeepsCachedCardsBeforeTruncationBoundary(t *testing.T) {
 	}
 }
 
+func TestRefreshDoesNotRedigestCachedPreBoundaryDayFromLateUpdatedMerge(t *testing.T) {
+	var llmCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		llmCalls++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": "Two merges landed."}}},
+		})
+	}))
+	defer srv.Close()
+
+	st, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	tf := &truncatedFetcher{}
+	tf.prs = []history.MergedPullRequest{
+		pr("old merge", "2026-08-12T10:00:00Z", "alice"),
+		pr("old merge too", "2026-08-12T11:00:00Z", "bob"),
+		pr("new merge", "2026-08-19T10:00:00Z", "alice"),
+	}
+	g := &Generator{
+		Store:   st,
+		Fetcher: tf,
+		LLM:     &match.LLM{BaseURL: srv.URL, Model: "test", Client: srv.Client()},
+		Now:     newsNow,
+	}
+	if err := g.Refresh(context.Background(), "org/repo"); err != nil {
+		t.Fatalf("first Refresh: %v", err)
+	}
+	if llmCalls != 2 {
+		t.Fatalf("first Refresh made %d LLM calls, want 2", llmCalls)
+	}
+
+	// The pull list is sorted by updated_at, so a PR merged well before the
+	// boundary still surfaces in the truncated fetch when it was commented on
+	// afterwards. Only one of the day's two merges is visible: the cached card
+	// must be carried forward without spending a digest on that partial set.
+	llmCalls = 0
+	tf.coveredSince = time.Date(2026, 8, 17, 6, 0, 0, 0, time.UTC)
+	tf.prs = []history.MergedPullRequest{
+		pr("old merge", "2026-08-12T10:00:00Z", "alice"),
+		pr("new merge", "2026-08-19T10:00:00Z", "alice"),
+	}
+	if err := g.Refresh(context.Background(), "org/repo"); err != nil {
+		t.Fatalf("second Refresh: %v", err)
+	}
+	if llmCalls != 0 {
+		t.Fatalf("second Refresh made %d LLM calls, want 0 (pre-boundary day re-digested from partial data)", llmCalls)
+	}
+	byDate := map[string]Item{}
+	for _, it := range st.Get("org/repo") {
+		byDate[it.Date] = it
+	}
+	if it := byDate["2026-08-12"]; it.PRCount != 2 || it.Source != "llm" {
+		t.Fatalf("pre-boundary card not carried forward intact: %+v", it)
+	}
+	if _, ok := byDate["2026-08-19"]; !ok {
+		t.Fatalf("covered card missing: %+v", byDate)
+	}
+}
+
 func TestRefreshCarriesCachedBoundaryCardWhenNoBoundaryMergeFetched(t *testing.T) {
 	st, err := NewStore(t.TempDir())
 	if err != nil {

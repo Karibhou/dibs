@@ -548,6 +548,61 @@ func TestFetchersStopPagingOncePageIsOlderThanWindow(t *testing.T) {
 	}
 }
 
+func TestPullPageDoneWithoutUpdatedAtPagesToCapWithoutBoundary(t *testing.T) {
+	// A full page whose last PR carries no updated_at gives no ordering
+	// evidence: paging must continue to the cap rather than stop as if the
+	// page were older than the window, and the cap must not be reported as a
+	// coverage boundary at a zero instant.
+	page := make([]pullActivity, perPage)
+	since := windowStart(fixedNow())
+	for _, tc := range []struct {
+		page     int
+		wantDone bool
+	}{
+		{page: 1, wantDone: false},
+		{page: maxPullPages - 1, wantDone: false},
+		{page: maxPullPages, wantDone: true},
+	} {
+		done, covered := pullPageDone(page, tc.page, since)
+		if done != tc.wantDone || !covered.IsZero() {
+			t.Fatalf("pullPageDone(zero updated_at, page=%d) = (%v, %v), want (%v, zero)", tc.page, done, covered, tc.wantDone)
+		}
+	}
+}
+
+func TestFetchersWithoutUpdatedAtRequestEveryPageAndReportNoBoundary(t *testing.T) {
+	merged := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	var pullsCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pullsCalls++
+		page := fullPullPage(merged, merged)
+		for _, pr := range page {
+			delete(pr, "updated_at")
+		}
+		_ = json.NewEncoder(w).Encode(page)
+	}))
+	defer srv.Close()
+
+	b := &Backfiller{BaseURL: srv.URL, Client: srv.Client(), Now: fixedNow}
+	if _, covered, err := b.fetchPullActivity(context.Background(), "org/repo", windowStart(fixedNow())); err != nil || !covered.IsZero() {
+		t.Fatalf("fetchPullActivity covered=%v err=%v", covered, err)
+	}
+	if pullsCalls != maxPullPages {
+		t.Fatalf("fetchPullActivity requested %d pages, want %d", pullsCalls, maxPullPages)
+	}
+	pullsCalls = 0
+	prs, covered, err := b.FetchMergedPullRequestsSince(context.Background(), "org/repo")
+	if err != nil || !covered.IsZero() {
+		t.Fatalf("FetchMergedPullRequestsSince covered=%v err=%v", covered, err)
+	}
+	if pullsCalls != maxPullPages {
+		t.Fatalf("FetchMergedPullRequestsSince requested %d pages, want %d", pullsCalls, maxPullPages)
+	}
+	if len(prs) != maxPullPages*perPage {
+		t.Fatalf("FetchMergedPullRequestsSince returned %d PRs, want %d", len(prs), maxPullPages*perPage)
+	}
+}
+
 func TestBackfillKeepsStoredPRCountsBeforeTruncationBoundary(t *testing.T) {
 	boundary := time.Date(2026, 8, 17, 6, 0, 0, 0, time.UTC)
 	merged := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
