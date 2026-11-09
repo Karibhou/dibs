@@ -181,6 +181,12 @@ type rateLimitedFetcher interface {
 	RateLimited() bool
 }
 
+// coverageFetcher is optionally implemented by a PullFetcher that can report
+// where its fetch was truncated by a page cap (history.Backfiller does).
+type coverageFetcher interface {
+	FetchMergedPullRequestsSince(ctx context.Context, repoID string) ([]history.MergedPullRequest, time.Time, error)
+}
+
 // Generator refreshes repo news asynchronously.
 type Generator struct {
 	Store   *Store
@@ -245,7 +251,16 @@ func (g *Generator) Refresh(ctx context.Context, repoID string) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	prs, err := g.Fetcher.FetchMergedPullRequests(ctx, repoID)
+	var (
+		prs          []history.MergedPullRequest
+		coveredSince time.Time
+		err          error
+	)
+	if cf, ok := g.Fetcher.(coverageFetcher); ok {
+		prs, coveredSince, err = cf.FetchMergedPullRequestsSince(ctx, repoID)
+	} else {
+		prs, err = g.Fetcher.FetchMergedPullRequests(ctx, repoID)
+	}
 	if err != nil {
 		return err
 	}
@@ -260,9 +275,22 @@ func (g *Generator) Refresh(ctx context.Context, repoID string) error {
 		dates = append(dates, date)
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(dates)))
+	boundary := ""
+	if !coveredSince.IsZero() {
+		boundary = coveredSince.UTC().Format("2006-01-02")
+	}
 	for _, date := range dates {
 		prs := grouped[date]
 		fp := fingerprintPRs(prs)
+		// The boundary day is only partially covered; keep its card rather than
+		// re-digesting an undercounted day.
+		if old, ok := cached[date]; ok && date == boundary {
+			items = append(items, old)
+			continue
+		}
+		if _, ok := cached[date]; ok && boundary != "" && date < boundary {
+			continue
+		}
 		// A fallback card written while the LLM was failing must be retried once
 		// an LLM is configured again (dibs#559). Cost is bounded: Refresh runs at
 		// most once per UTC day per repo over at most 14 dates.
@@ -272,6 +300,21 @@ func (g *Generator) Refresh(ctx context.Context, repoID string) error {
 		}
 		item := cachedItem{Item: g.digest(ctx, repoID, date, prs, counts), Fingerprint: fp}
 		items = append(items, item)
+	}
+	if boundary != "" {
+		// Dates before the boundary were never fully fetched; carry cached cards
+		// forward. The boundary day's card is carried too when none of its merged
+		// PRs were fetched (otherwise the loop above already kept it).
+		start := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -(WindowDays - 1)).Format("2006-01-02")
+		for date, old := range cached {
+			if date < start || date > boundary {
+				continue
+			}
+			if _, seen := grouped[date]; seen && date == boundary {
+				continue
+			}
+			items = append(items, old)
+		}
 	}
 	return g.Store.upsert(repoID, items, now)
 }

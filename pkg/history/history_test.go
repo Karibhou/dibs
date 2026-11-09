@@ -90,7 +90,7 @@ func TestFetchPullActivityClassifiesClankerPRs(t *testing.T) {
 	defer srv.Close()
 
 	b := &Backfiller{BaseURL: srv.URL, Client: srv.Client(), Now: fixedNow}
-	got, err := b.fetchPullActivity(context.Background(), "org/repo")
+	got, _, err := b.fetchPullActivity(context.Background(), "org/repo", windowStart(fixedNow()))
 	if err != nil {
 		t.Fatalf("fetchPullActivity: %v", err)
 	}
@@ -507,5 +507,129 @@ func TestUpsertRollsBackWhenPersistFails(t *testing.T) {
 	}
 	if got := s.List(); len(got) != 1 {
 		t.Fatalf("List len = %d, want 1", len(got))
+	}
+}
+
+func fullPullPage(updated, merged time.Time) []map[string]any {
+	page := make([]map[string]any, perPage)
+	for i := range page {
+		page[i] = map[string]any{
+			"created_at": merged.Add(-time.Hour).Format(time.RFC3339),
+			"updated_at": updated.Format(time.RFC3339),
+			"merged_at":  merged.Format(time.RFC3339),
+			"body":       "human",
+		}
+	}
+	return page
+}
+
+func TestFetchersStopPagingOncePageIsOlderThanWindow(t *testing.T) {
+	old := windowStart(fixedNow()).Add(-48 * time.Hour)
+	var pullsCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pullsCalls++
+		_ = json.NewEncoder(w).Encode(fullPullPage(old, old))
+	}))
+	defer srv.Close()
+
+	b := &Backfiller{BaseURL: srv.URL, Client: srv.Client(), Now: fixedNow}
+	if _, covered, err := b.fetchPullActivity(context.Background(), "org/repo", windowStart(fixedNow())); err != nil || !covered.IsZero() {
+		t.Fatalf("fetchPullActivity covered=%v err=%v", covered, err)
+	}
+	if pullsCalls != 1 {
+		t.Fatalf("fetchPullActivity requested %d pages, want 1", pullsCalls)
+	}
+	pullsCalls = 0
+	if _, covered, err := b.FetchMergedPullRequestsSince(context.Background(), "org/repo"); err != nil || !covered.IsZero() {
+		t.Fatalf("FetchMergedPullRequestsSince covered=%v err=%v", covered, err)
+	}
+	if pullsCalls != 1 {
+		t.Fatalf("FetchMergedPullRequestsSince requested %d pages, want 1", pullsCalls)
+	}
+}
+
+func TestBackfillKeepsStoredPRCountsBeforeTruncationBoundary(t *testing.T) {
+	boundary := time.Date(2026, 8, 17, 6, 0, 0, 0, time.UTC)
+	merged := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/org/repo/issues":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case "/repos/org/repo/pulls":
+			_ = json.NewEncoder(w).Encode(fullPullPage(boundary, merged))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	st, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := st.Upsert("org/repo", []DayActivity{
+		{Date: "2026-08-10", MergedPRs: 7, PRsClanker: 2, Backfilled: true},
+		{Date: "2026-08-17", MergedPRs: 9, Backfilled: true},
+	}, fixedNow()); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	b := &Backfiller{Store: st, BaseURL: srv.URL, Client: srv.Client(), Now: fixedNow}
+	if err := b.Backfill(context.Background(), "org/repo"); err != nil {
+		t.Fatalf("Backfill: %v", err)
+	}
+	got, _ := st.Get("org/repo")
+	byDate := map[string]DayActivity{}
+	for _, d := range got.Days {
+		byDate[d.Date] = d
+	}
+	if d := byDate["2026-08-10"]; d.MergedPRs != 7 || d.PRsClanker != 2 {
+		t.Fatalf("pre-boundary day was overwritten: %+v", d)
+	}
+	if d := byDate["2026-08-17"]; d.MergedPRs != 9 {
+		t.Fatalf("boundary day was overwritten with partial counts: %+v", d)
+	}
+	if d := byDate["2026-08-18"]; d.MergedPRs != perPage*maxPullPages {
+		t.Fatalf("covered day = %+v, want %d merges", d, perPage*maxPullPages)
+	}
+}
+
+func TestBackfillUsesFreshCountsForUnstoredBoundaryDay(t *testing.T) {
+	boundary := time.Date(2026, 8, 17, 6, 0, 0, 0, time.UTC)
+	merged := time.Date(2026, 8, 17, 10, 0, 0, 0, time.UTC)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/org/repo/issues":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case "/repos/org/repo/pulls":
+			_ = json.NewEncoder(w).Encode(fullPullPage(boundary, merged))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	st, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := st.Upsert("org/repo", []DayActivity{
+		{Date: "2026-08-10", MergedPRs: 7, Backfilled: true},
+	}, fixedNow()); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	b := &Backfiller{Store: st, BaseURL: srv.URL, Client: srv.Client(), Now: fixedNow}
+	if err := b.Backfill(context.Background(), "org/repo"); err != nil {
+		t.Fatalf("Backfill: %v", err)
+	}
+	got, _ := st.Get("org/repo")
+	byDate := map[string]DayActivity{}
+	for _, d := range got.Days {
+		byDate[d.Date] = d
+	}
+	if d := byDate["2026-08-10"]; d.MergedPRs != 7 {
+		t.Fatalf("pre-boundary day was overwritten: %+v", d)
+	}
+	if d := byDate["2026-08-17"]; d.MergedPRs != perPage*maxPullPages {
+		t.Fatalf("unstored boundary day = %+v, want %d fresh merges", d, perPage*maxPullPages)
 	}
 }

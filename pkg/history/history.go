@@ -278,9 +278,34 @@ func (b *Backfiller) Backfill(ctx context.Context, repoID string) error {
 	if err != nil {
 		return err
 	}
-	prs, err := b.fetchPullActivity(ctx, repoID)
+	prs, coveredSince, err := b.fetchPullActivity(ctx, repoID, windowStart(fetchedAt))
 	if err != nil {
 		return err
+	}
+	kept := map[string]bool{}
+	if !coveredSince.IsZero() {
+		// The page cap cut the pull fetch short; days up to and including the
+		// boundary were never fully seen, so keep their stored PR counts instead
+		// of zeroing (or, for the boundary day itself, undercounting and then
+		// freezing that undercount on the next run).
+		boundary := coveredSince.UTC().Format("2006-01-02")
+		if prev, ok := b.Store.Get(repoID); ok {
+			for _, old := range prev.Days {
+				if d, ok := days[old.Date]; ok && old.Date <= boundary {
+					d.MergedPRs = old.MergedPRs
+					d.ClankerPRsCreated = old.ClankerPRsCreated
+					d.ClankerPRsMerged = old.ClankerPRsMerged
+					d.PRsClanker = old.PRsClanker
+					days[old.Date] = d
+					kept[old.Date] = true
+				}
+			}
+		}
+		for date := range days {
+			if date < boundary {
+				kept[date] = true
+			}
+		}
 	}
 	for date, counts := range issues {
 		if d, ok := days[date]; ok {
@@ -291,7 +316,7 @@ func (b *Backfiller) Backfill(ctx context.Context, repoID string) error {
 		}
 	}
 	for date, counts := range prs {
-		if d, ok := days[date]; ok {
+		if d, ok := days[date]; ok && !kept[date] {
 			d.MergedPRs += counts.RegularPRsMerged
 			d.ClankerPRsCreated += counts.ClankerPRsCreated
 			d.ClankerPRsMerged += counts.ClankerPRsMerged
@@ -402,15 +427,24 @@ func isDibsFiledIssue(body string) bool {
 // FetchMergedPullRequests fetches recent merged PRs for repoID using the same
 // GitHub client, auth, timeout, pagination, and skip semantics as Backfill.
 func (b *Backfiller) FetchMergedPullRequests(ctx context.Context, repoID string) ([]MergedPullRequest, error) {
+	out, _, err := b.FetchMergedPullRequestsSince(ctx, repoID)
+	return out, err
+}
+
+// FetchMergedPullRequestsSince is FetchMergedPullRequests plus the coverage
+// boundary: a non-zero coveredSince means the page cap was hit while PRs were
+// still inside the window, so merges before that instant may be missing.
+func (b *Backfiller) FetchMergedPullRequestsSince(ctx context.Context, repoID string) (prs []MergedPullRequest, coveredSince time.Time, err error) {
 	if b.RateLimited() {
-		return nil, errSkipRepo
+		return nil, time.Time{}, errSkipRepo
 	}
+	since := windowStart(b.now())
 	var out []MergedPullRequest
 	for page := 1; page <= maxPullPages; page++ {
 		path := fmt.Sprintf("/repos/%s/pulls?state=closed&sort=updated&direction=desc&per_page=%d&page=%d", repoID, perPage, page)
 		var pulls []pullActivity
 		if err := b.getJSON(ctx, path, &pulls); err != nil {
-			return nil, err
+			return nil, time.Time{}, err
 		}
 		for _, pr := range pulls {
 			if pr.MergedAt == nil {
@@ -422,21 +456,44 @@ func (b *Backfiller) FetchMergedPullRequests(ctx context.Context, repoID string)
 				Author:   strings.TrimSpace(pr.User.Login),
 			})
 		}
-		if len(pulls) < perPage {
+		done, covered := pullPageDone(pulls, page, since)
+		if done {
+			coveredSince = covered
 			break
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].MergedAt.After(out[j].MergedAt) })
-	return out, nil
+	return out, coveredSince, nil
 }
 
-func (b *Backfiller) fetchPullActivity(ctx context.Context, repoID string) (map[string]activityCounts, error) {
+// pullPageDone reports whether paging should stop after pulls (sorted by
+// updated desc). covered is non-zero only when the page cap truncated a window
+// that still had more PRs inside it.
+func pullPageDone(pulls []pullActivity, page int, since time.Time) (done bool, covered time.Time) {
+	if len(pulls) < perPage {
+		return true, time.Time{}
+	}
+	oldest := pulls[len(pulls)-1].UpdatedAt
+	if oldest.IsZero() {
+		return page >= maxPullPages, time.Time{}
+	}
+	if oldest.Before(since) {
+		return true, time.Time{}
+	}
+	if page >= maxPullPages {
+		return true, oldest.UTC()
+	}
+	return false, time.Time{}
+}
+
+func (b *Backfiller) fetchPullActivity(ctx context.Context, repoID string, since time.Time) (map[string]activityCounts, time.Time, error) {
 	out := map[string]activityCounts{}
+	var coveredSince time.Time
 	for page := 1; page <= maxPullPages; page++ {
 		path := fmt.Sprintf("/repos/%s/pulls?state=all&sort=updated&direction=desc&per_page=%d&page=%d", repoID, perPage, page)
 		var pulls []pullActivity
 		if err := b.getJSON(ctx, path, &pulls); err != nil {
-			return nil, err
+			return nil, time.Time{}, err
 		}
 		for _, pr := range pulls {
 			clanker := isClankerPR(pr, clankerMarkers())
@@ -459,11 +516,13 @@ func (b *Backfiller) fetchPullActivity(ctx context.Context, repoID string) (map[
 			}
 			out[date] = counts
 		}
-		if len(pulls) < perPage {
+		done, covered := pullPageDone(pulls, page, since)
+		if done {
+			coveredSince = covered
 			break
 		}
 	}
-	return out, nil
+	return out, coveredSince, nil
 }
 
 func isHumanLogin(login string) bool {
@@ -477,6 +536,7 @@ func isHumanLogin(login string) bool {
 type pullActivity struct {
 	Title     string     `json:"title"`
 	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 	MergedAt  *time.Time `json:"merged_at"`
 	Body      string     `json:"body"`
 	User      struct {
