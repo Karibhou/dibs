@@ -107,8 +107,10 @@ File Storage quota, makes store writes fail:
 
    ```sh
    kubectl -n dibs run dibs-df --rm -i --restart=Never --image=busybox:1.36 \
-     --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"runAsGroup":65532},
+     --overrides='{"spec":{"automountServiceAccountToken":false,
+       "securityContext":{"runAsNonRoot":true,"runAsUser":65532,"runAsGroup":65532,"seccompProfile":{"type":"RuntimeDefault"}},
        "containers":[{"name":"dibs-df","image":"busybox:1.36",
+         "securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}},
          "command":["sh","-c","df -h /data; du -sh /data; du -sh /data/* /data/.[!.]* 2>/dev/null"],
          "volumeMounts":[{"name":"data","mountPath":"/data","readOnly":true}]}],
        "volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"dibs-data-rwx"}}]}}'
