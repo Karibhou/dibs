@@ -23,6 +23,7 @@ is not yet known. If a recent merge is the obvious cause, go straight to
 |---|---|---|
 | `DibsDown` firing (no successful scrape) | no pods running, pods crash-looping, or the metrics port/ServiceMonitor is broken | `kubectl -n dibs get pods -l app=dibs`; if pods are Ready, check the `dibs` Service `metrics` port and the ServiceMonitor target. |
 | `/readyz` 503, pod not Ready | data volume unavailable or read-only | Check the `dibs-data-rwx` PVC and mount (`kubectl -n dibs describe pod`, `kubectl -n dibs get pvc`). Do not delete the PVC. |
+| Write routes return 5xx while reads succeed, or the `readyz store ping failed` `err` reads `no space left on device` / `disk quota exceeded` | data volume full | Follow [section 8](#8-data-volume-full). |
 | Errors began right after a rollout | bad release | Follow [release-rollback.md](release-rollback.md). |
 | Pod restarting | crash or OOM | `kubectl -n dibs describe pod` for last state; `kubectl -n dibs logs --previous`. |
 | 4xx on authenticated routes only | auth or secret misconfiguration | Verify the `dibs` secret and configmap in `deploy/` match what is deployed. |
@@ -85,3 +86,53 @@ For `DibsPodRestarting`. A container that restarts and recovers can leave
    low for the current load; raise the limit and roll out.
 3. Otherwise read the crash output: `kubectl -n dibs logs deploy/dibs --previous`.
 4. If restarts began right after a rollout, follow [release-rollback.md](release-rollback.md).
+
+## 8. Data volume full
+
+No alert covers this; headroom is checked by hand (see
+[slo.md](slo.md#storage-headroom) for why). A full volume, or an exhausted
+File Storage quota, makes store writes fail:
+
+- Mutating routes answer 500 `internal error` while reads keep working, so
+  `DibsHigh5xxRatio` is usually the first alert. The handlers do not log the
+  filesystem error.
+- `/readyz` can stay 200: its probe creates an empty file, which may still
+  succeed when there is no room for data. When it does fail, the
+  `readyz store ping failed` line's `err` reads `no space left on device`
+  (ENOSPC) or `disk quota exceeded` (EDQUOT) and `DibsReadyzFailing` fires.
+
+1. Measure. The image is distroless (no shell, `df` or `du`), so
+   `kubectl exec deploy/dibs -- df` does not work. Mount the claim read-only
+   in a one-off pod running as the Dibs uid (the store files are mode 0600):
+
+   ```sh
+   kubectl -n dibs run dibs-df --rm -i --restart=Never --image=busybox:1.36 \
+     --overrides='{"spec":{"automountServiceAccountToken":false,
+       "securityContext":{"runAsNonRoot":true,"runAsUser":65532,"runAsGroup":65532,"seccompProfile":{"type":"RuntimeDefault"}},
+       "containers":[{"name":"dibs-df","image":"busybox:1.36",
+         "securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}},
+         "command":["sh","-c","df -h /data; du -sh /data; du -sh /data/* /data/.[!.]* 2>/dev/null"],
+         "volumeMounts":[{"name":"data","mountPath":"/data","readOnly":true}]}],
+       "volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"dibs-data-rwx"}}]}}'
+   ```
+
+   `df` describes the whole FSS file system behind the export, shared with
+   the hub; `du` is Dibs' own share of it. A `Size` around `8.0E` means no
+   limit is reported; anything smaller is a mount-target Reported Size
+   (cosmetic) or a file-system quota (enforced). Only the cluster operator
+   can tell which. `df` can lag the real usage by up to an hour.
+2. If `du` is small next to the `df` `Used` column, the hub's data is
+   consuming the share. Dibs cannot free it: escalate to the hub/cluster
+   operator to free space or raise the quota.
+3. If Dibs' own files dominate, look for leftover `.tmp-*` files (a write
+   that crashed between create and rename; a live write lasts milliseconds).
+   Take a backup first ([data-recovery.md](data-recovery.md#take-a-backup)),
+   then rerun the pod above with `"readOnly":false` and the command
+   `find /data -name '.tmp-*' -mmin +60 -print -delete`. Do not delete
+   ideas, notifications or repo profiles to make room; ask the cluster
+   operator to raise the quota instead.
+4. Never delete the `dibs-data-rwx` PVC or the `dibs-fss-pv` volume.
+5. Verify: `/readyz` returns `ok`, a write through the UI succeeds, and the
+   5xx `metrics http` log lines stop. Record the `du` and `df` figures in the
+   tracking issue so the next check in [slo.md](slo.md#storage-headroom) has
+   a baseline.

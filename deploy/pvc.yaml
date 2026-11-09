@@ -3,7 +3,9 @@
 # uses, dibs/ subdirectory) so rollouts can overlap old and new pods
 # (RollingUpdate, zero downtime). The store remains single-writer by
 # design; the only concurrent access is the brief handoff during a
-# rollout.
+# rollout. The 10Gi below is nominal: NFS does not enforce it and the
+# kubelet's volume stats report the whole FSS file system, so there is
+# no capacity alert (see runbooks/slo.md, "Storage headroom").
 apiVersion: v1
 kind: PersistentVolume
 metadata:

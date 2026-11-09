@@ -57,6 +57,37 @@ kubectl -n dibs logs deploy/dibs --since=1h \
   | jq -c 'select(.msg == "metrics job" and .outcome == "error")'
 ```
 
+## Storage headroom
+
+Not alerted; checked by hand. The store lives on `dibs-data-rwx`, a
+statically provisioned NFS volume (`dibs-fss-pv` in `deploy/pvc.yaml`, the
+OCI File Storage export `/hive-hub/dibs`, shared with the hub). For an NFS
+volume the kubelet fills `kubelet_volume_stats_*` from `statfs` on the mount
+(the in-tree NFS plugin uses `volume.NewMetricsStatFS`), so those series
+describe the whole FSS file system, not the Dibs subdirectory and not the
+nominal, unenforced `10Gi`. OCI reports an FSS file system as 8 EiB unless the
+mount target sets a Reported Size or the file system has a quota
+([OCI docs](https://docs.oracle.com/en-us/iaas/Content/File/Concepts/FSutilization.htm#Using)).
+An available/capacity ratio alert would therefore either never fire or fire
+on the hub's usage.
+
+`/readyz` is not a headroom signal either: its write probe creates an empty
+file, which can succeed on a full volume, so the first symptom is usually 5xx
+on write routes (`DibsHigh5xxRatio`).
+
+- Check monthly, at each target review below, and before any release that
+  migrates the store or bulk-imports data, using step 1 of
+  [incident-response.md section 8](incident-response.md#8-data-volume-full).
+- Record `du -sh /data` (Dibs' own usage) and the `df -h /data` line in the
+  tracking issue, so growth between checks is visible.
+- When `df` reports a real limit (a `Size` well below `8.0E`) and less than
+  15% of it is available, ask the cluster operator to raise the quota before
+  writes start failing.
+
+If the cluster gains a per-export metric for this share (for example an FSS
+quota metric scraped into Prometheus), replace this manual check with an
+alert in `deploy/monitoring/prometheusrule.yaml` pointing at section 8.
+
 ## Error budget policy
 
 - Budget at 99.5% over 30 days is about 3.6 hours of unavailability, or 0.5%
