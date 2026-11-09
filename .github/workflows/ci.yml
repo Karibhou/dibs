@@ -115,7 +115,11 @@ jobs:
           go-version-file: go.mod
       - name: Gremlins mutation report (advisory)
         # Reproduce locally: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
-        # && gremlins unleash --diff origin/main ./pkg/...
+        # && gremlins unleash --diff origin/main .
+        # The path must be the module root: gremlins v0.6.0 keys both the
+        # coverage profile and the `git diff` file names relative to it, and a
+        # `./pkg/...` pattern is taken literally as a (missing) directory, so
+        # nothing is scanned and the report is always empty.
         run: |
           set -uo pipefail
           go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
@@ -124,7 +128,7 @@ jobs:
             echo '```text'
           } >> "$GITHUB_STEP_SUMMARY"
           status=0
-          timeout 15m "$(go env GOPATH)/bin/gremlins" unleash --diff origin/main ./pkg/... 2>&1 \
+          timeout 15m "$(go env GOPATH)/bin/gremlins" unleash --diff origin/main . 2>&1 \
             | tee -a "$GITHUB_STEP_SUMMARY" || status=$?
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "gremlins exit status: ${status} (124 = timed out; advisory only)" | tee -a "$GITHUB_STEP_SUMMARY"
