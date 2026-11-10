@@ -170,7 +170,6 @@ var casefoldAllowlist = map[string]string{
 	"pkg/history/history.go:140":   "persist-failure rollback restores the snapshot under the key written three lines above",
 	"pkg/history/history.go:246":   "backfill work deduplication uses registry List profile spelling",
 	"pkg/history/history.go:249":   "backfill work reservation uses the same registry-canonical key",
-	"pkg/history/history.go:582":   "login is lower-cased at function entry before comparing to the lowercase bot name",
 	"pkg/news/news.go:79":          "reload restores registry-canonical keys written by the generator",
 	"pkg/news/news.go:92":          "API resolves the requested repo through the registry before reading news",
 	"pkg/news/news.go:110":         "generator staleness check reads the same registry List profile key the generator writes",

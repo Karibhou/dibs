@@ -124,6 +124,19 @@ func TestClankerMarkersAreConfigurableAndConservative(t *testing.T) {
 	}
 }
 
+func TestDefaultClankerMarkersIncludeBothBots(t *testing.T) {
+	markers := clankerMarkers()
+	var pr pullActivity
+	pr.User.Login = "hivecommons-hive[bot]"
+	if !isClankerPR(pr, markers) {
+		t.Fatalf("hivecommons-hive[bot] login must be classified as clanker with default markers")
+	}
+	pr.User.Login = "kubestellar-hive[bot]"
+	if !isClankerPR(pr, markers) {
+		t.Fatalf("kubestellar-hive[bot] login must still be classified as clanker with default markers")
+	}
+}
+
 func TestBackfillIsIdempotent(t *testing.T) {
 	if BackfillVersion != 3 {
 		t.Fatalf("BackfillVersion = %d, want 3", BackfillVersion)

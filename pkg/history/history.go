@@ -579,7 +579,7 @@ func isHumanLogin(login string) bool {
 	if login == "" {
 		return false
 	}
-	return login != "kubestellar-hive[bot]" && !strings.HasSuffix(login, "[bot]")
+	return !strings.HasSuffix(login, "[bot]")
 }
 
 type pullActivity struct {
@@ -602,7 +602,7 @@ type pullActivity struct {
 func clankerMarkers() []string {
 	raw := envutil.Get(EnvClankerMarkers)
 	if raw == "" {
-		raw = "hive: agent=,kubestellar-hive[bot]"
+		raw = "hive: agent=,hivecommons-hive[bot],kubestellar-hive[bot]"
 	}
 	parts := strings.Split(raw, ",")
 	markers := make([]string, 0, len(parts))

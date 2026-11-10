@@ -104,7 +104,7 @@ Operator rollout result: /healthz expected version, /readyz, or rollback:
 | `DIBS_LLM_MODEL` | Secret (optional) | gateway default | Model name |
 | `DIBS_GITHUB_TOKEN` | Secret (optional) | unset | **Legacy mode only**: when set, Dibs opens the credited issue server-side on accept. Unset (default), the ideator files a prefilled GitHub issue themselves. Also authenticates the GitHub lookup that verifies a confirmed issue URL (anonymous otherwise) |
 | `DIBS_ADMINS` | Secret (optional) | unset | Comma-separated, case-insensitive GitHub logins granted admin access (idea-moderation endpoints) |
-| `DIBS_CLANKER_MARKERS` | ConfigMap (optional) | `hive: agent=,kubestellar-hive[bot]` | Comma-separated, case-insensitive markers matched against PR branch/labels/body/author to classify agent activity |
+| `DIBS_CLANKER_MARKERS` | ConfigMap (optional) | `hive: agent=,hivecommons-hive[bot],kubestellar-hive[bot]` | Comma-separated, case-insensitive markers matched against PR branch/labels/body/author to classify agent activity |
 | `DIBS_INTAKE_MAX_MB` | ConfigMap (optional) | `25` | Max upload size (MB) accepted for idea-intake file uploads. `ingress.yaml` pins `nginx.ingress.kubernetes.io/proxy-body-size: "30m"` to stay above this cap; raise both together or ingress-nginx returns 413 first |
 | `DIBS_INTAKE_EXTRACT_WORKER` | ConfigMap (optional) | _(on)_ | Set to `off` to extract uploaded documents in-process instead of in a memory-limited, time-limited child worker (not recommended) |
 | `DIBS_STT_URL` | Secret (optional) | unset | Speech-to-text gateway; unset ⇒ voice/audio idea submission disabled |
