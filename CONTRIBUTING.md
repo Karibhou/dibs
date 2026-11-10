@@ -2,6 +2,12 @@
 
 Thanks for contributing! A few ground rules:
 
+## Finding something to work on
+
+- Issues labelled [`good first issue`](https://github.com/hivecommons/dibs/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) are scoped for a first PR; [`help wanted`](https://github.com/hivecommons/dibs/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22) issues are open to anyone.
+- An improvement or new capability for Dibs starts with a [feature request](https://github.com/hivecommons/dibs/issues/new?template=feature_request.yml); [ROADMAP.md](ROADMAP.md) lists the near-term direction.
+- Not sure where to start, or want to check an approach before writing code? Ask in the [Hive Commons Discord](https://hivecommons.dev/discord) or bring it to the biweekly [Hive Commons community meeting](https://docs.hivecommons.dev/docs/community/meetings).
+
 ## Developer Certificate of Origin (DCO)
 
 All commits **must** be signed off, certifying the
