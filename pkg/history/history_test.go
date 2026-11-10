@@ -40,7 +40,7 @@ func TestFetchIssueActivityFiltersPRsAndScoresDibsIdeas(t *testing.T) {
 	defer srv.Close()
 
 	b := &Backfiller{BaseURL: srv.URL, Token: "test-token", Client: srv.Client(), Now: fixedNow}
-	got, err := b.fetchIssueActivity(context.Background(), "org/repo", windowStart(fixedNow()))
+	got, _, err := b.fetchIssueActivity(context.Background(), "org/repo", windowStart(fixedNow()))
 	if err != nil {
 		t.Fatalf("fetchIssueActivity: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestFetchIssueActivityClassifiesHumanIssues(t *testing.T) {
 	defer srv.Close()
 
 	b := &Backfiller{BaseURL: srv.URL, Client: srv.Client(), Now: fixedNow}
-	got, err := b.fetchIssueActivity(context.Background(), "org/repo", windowStart(fixedNow()))
+	got, _, err := b.fetchIssueActivity(context.Background(), "org/repo", windowStart(fixedNow()))
 	if err != nil {
 		t.Fatalf("fetchIssueActivity: %v", err)
 	}
@@ -686,5 +686,130 @@ func TestBackfillUsesFreshCountsForUnstoredBoundaryDay(t *testing.T) {
 	}
 	if d := byDate["2026-08-17"]; d.MergedPRs != perPage*maxPullPages {
 		t.Fatalf("unstored boundary day = %+v, want %d fresh merges", d, perPage*maxPullPages)
+	}
+}
+
+func issuePage(created time.Time, n int) []map[string]any {
+	page := make([]map[string]any, n)
+	for i := range page {
+		page[i] = map[string]any{
+			"created_at": created.Format(time.RFC3339),
+			"body":       "regular",
+			"user":       map[string]any{"login": "alice"},
+		}
+	}
+	return page
+}
+
+func TestBackfillIssueCapKeepsStoredCountsBeforeBoundary(t *testing.T) {
+	covered := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	boundary := time.Date(2026, 8, 17, 6, 0, 0, 0, time.UTC)
+	var issuesCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/org/repo/issues":
+			issuesCalls++
+			if r.URL.Query().Get("page") == "3" {
+				_ = json.NewEncoder(w).Encode(issuePage(boundary, perPage))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(issuePage(covered, perPage))
+		case "/repos/org/repo/pulls":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	st, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := st.Upsert("org/repo", []DayActivity{
+		{Date: "2026-08-10", RegularIssuesCreated: 7, IdeasFiled: 1, IssuesHuman: 5, Backfilled: true},
+		{Date: "2026-08-17", RegularIssuesCreated: 9, Backfilled: true},
+		{Date: "2026-08-18", RegularIssuesCreated: 3, Backfilled: true},
+	}, fixedNow()); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	b := &Backfiller{Store: st, BaseURL: srv.URL, Client: srv.Client(), Now: fixedNow}
+	if err := b.Backfill(context.Background(), "org/repo"); err != nil {
+		t.Fatalf("Backfill: %v", err)
+	}
+	if issuesCalls != maxPullPages {
+		t.Fatalf("issues requested %d pages, want %d", issuesCalls, maxPullPages)
+	}
+	got, _ := st.Get("org/repo")
+	byDate := map[string]DayActivity{}
+	for _, d := range got.Days {
+		byDate[d.Date] = d
+	}
+	if d := byDate["2026-08-10"]; d.RegularIssuesCreated != 7 || d.IdeasFiled != 1 || d.IssuesHuman != 5 {
+		t.Fatalf("pre-boundary day was overwritten: %+v", d)
+	}
+	if d := byDate["2026-08-17"]; d.RegularIssuesCreated != 9 {
+		t.Fatalf("boundary day was overwritten with partial counts: %+v", d)
+	}
+	if d := byDate["2026-08-18"]; d.RegularIssuesCreated != perPage*(maxPullPages-1) {
+		t.Fatalf("covered day = %+v, want %d issues", d, perPage*(maxPullPages-1))
+	}
+}
+
+func TestBackfillShortIssuePageOverwritesOlderDays(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/org/repo/issues":
+			_ = json.NewEncoder(w).Encode(issuePage(time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC), 2))
+		case "/repos/org/repo/pulls":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	st, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := st.Upsert("org/repo", []DayActivity{
+		{Date: "2026-08-10", RegularIssuesCreated: 7, Backfilled: true},
+	}, fixedNow()); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	b := &Backfiller{Store: st, BaseURL: srv.URL, Client: srv.Client(), Now: fixedNow}
+	if _, covered, err := b.fetchIssueActivity(context.Background(), "org/repo", windowStart(fixedNow())); err != nil || !covered.IsZero() {
+		t.Fatalf("fetchIssueActivity covered=%v err=%v", covered, err)
+	}
+	if err := b.Backfill(context.Background(), "org/repo"); err != nil {
+		t.Fatalf("Backfill: %v", err)
+	}
+	got, _ := st.Get("org/repo")
+	for _, d := range got.Days {
+		if d.Date == "2026-08-10" && d.RegularIssuesCreated != 0 {
+			t.Fatalf("complete coverage should refresh old day to zero: %+v", d)
+		}
+		if d.Date == "2026-08-18" && d.RegularIssuesCreated != 2 {
+			t.Fatalf("day = %+v, want 2 issues", d)
+		}
+	}
+}
+
+func TestFetchIssueActivityStopsPagingOncePageIsOlderThanWindow(t *testing.T) {
+	old := windowStart(fixedNow()).Add(-48 * time.Hour)
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_ = json.NewEncoder(w).Encode(issuePage(old, perPage))
+	}))
+	defer srv.Close()
+
+	b := &Backfiller{BaseURL: srv.URL, Client: srv.Client(), Now: fixedNow}
+	if _, covered, err := b.fetchIssueActivity(context.Background(), "org/repo", windowStart(fixedNow())); err != nil || !covered.IsZero() {
+		t.Fatalf("fetchIssueActivity covered=%v err=%v", covered, err)
+	}
+	if calls != 1 {
+		t.Fatalf("requested %d pages, want 1", calls)
 	}
 }

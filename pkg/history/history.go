@@ -274,7 +274,7 @@ func (b *Backfiller) Backfill(ctx context.Context, repoID string) error {
 
 	fetchedAt := b.now()
 	days := zeroDays(fetchedAt)
-	issues, err := b.fetchIssueActivity(ctx, repoID, windowStart(fetchedAt))
+	issues, issuesCoveredSince, err := b.fetchIssueActivity(ctx, repoID, windowStart(fetchedAt))
 	if err != nil {
 		return err
 	}
@@ -307,8 +307,30 @@ func (b *Backfiller) Backfill(ctx context.Context, repoID string) error {
 			}
 		}
 	}
+	keptIssues := map[string]bool{}
+	if !issuesCoveredSince.IsZero() {
+		// Same as the pull side: the issue page cap hid everything created
+		// before the boundary, so keep stored issue counts for those days.
+		boundary := issuesCoveredSince.UTC().Format("2006-01-02")
+		if prev, ok := b.Store.Get(repoID); ok {
+			for _, old := range prev.Days {
+				if d, ok := days[old.Date]; ok && old.Date <= boundary {
+					d.RegularIssuesCreated = old.RegularIssuesCreated
+					d.IdeasFiled = old.IdeasFiled
+					d.IssuesHuman = old.IssuesHuman
+					days[old.Date] = d
+					keptIssues[old.Date] = true
+				}
+			}
+		}
+		for date := range days {
+			if date < boundary {
+				keptIssues[date] = true
+			}
+		}
+	}
 	for date, counts := range issues {
-		if d, ok := days[date]; ok {
+		if d, ok := days[date]; ok && !keptIssues[date] {
 			d.RegularIssuesCreated = counts.RegularIssuesCreated
 			d.IdeasFiled = counts.IdeasFiled
 			d.IssuesHuman = counts.IssuesHuman
@@ -382,10 +404,31 @@ type activityCounts struct {
 	PRsClanker  int
 }
 
-func (b *Backfiller) fetchIssueActivity(ctx context.Context, repoID string, since time.Time) (map[string]activityCounts, error) {
+// issuePageDone reports whether paging should stop after a page of issues
+// (sorted by created desc). covered is non-zero only when the page cap
+// truncated a window that still had more issues inside it.
+func issuePageDone(createdAts []time.Time, page int, since time.Time) (done bool, covered time.Time) {
+	if len(createdAts) < perPage {
+		return true, time.Time{}
+	}
+	oldest := createdAts[len(createdAts)-1]
+	if oldest.Before(since) {
+		return true, time.Time{}
+	}
+	if page >= maxPullPages {
+		return true, oldest.UTC()
+	}
+	return false, time.Time{}
+}
+
+// fetchIssueActivity returns per-day issue counts. A non-zero coveredSince
+// means the page cap cut the fetch short and days up to that instant are
+// incomplete.
+func (b *Backfiller) fetchIssueActivity(ctx context.Context, repoID string, since time.Time) (map[string]activityCounts, time.Time, error) {
 	out := map[string]activityCounts{}
+	var coveredSince time.Time
 	for page := 1; page <= maxPullPages; page++ {
-		path := fmt.Sprintf("/repos/%s/issues?state=all&since=%s&per_page=%d&page=%d", repoID, since.UTC().Format(time.RFC3339), perPage, page)
+		path := fmt.Sprintf("/repos/%s/issues?state=all&sort=created&direction=desc&since=%s&per_page=%d&page=%d", repoID, since.UTC().Format(time.RFC3339), perPage, page)
 		var issues []struct {
 			CreatedAt   time.Time        `json:"created_at"`
 			Body        string           `json:"body"`
@@ -395,7 +438,11 @@ func (b *Backfiller) fetchIssueActivity(ctx context.Context, repoID string, sinc
 			} `json:"user"`
 		}
 		if err := b.getJSON(ctx, path, &issues); err != nil {
-			return nil, err
+			return nil, time.Time{}, err
+		}
+		createdAts := make([]time.Time, len(issues))
+		for i, issue := range issues {
+			createdAts[i] = issue.CreatedAt
 		}
 		for _, issue := range issues {
 			if issue.PullRequest != nil || issue.CreatedAt.Before(since) {
@@ -413,11 +460,13 @@ func (b *Backfiller) fetchIssueActivity(ctx context.Context, repoID string, sinc
 			}
 			out[date] = counts
 		}
-		if len(issues) < perPage {
+		done, covered := issuePageDone(createdAts, page, since)
+		if done {
+			coveredSince = covered
 			break
 		}
 	}
-	return out, nil
+	return out, coveredSince, nil
 }
 
 func isDibsFiledIssue(body string) bool {
