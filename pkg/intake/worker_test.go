@@ -278,6 +278,28 @@ func TestCappedBuffer(t *testing.T) {
 	}
 }
 
+// TestWorkerMainInProcess runs the worker entry point in this process. The
+// re-exec'd worker in TestExtractWorkerRoundTrip runs the same code, but a
+// child process leaves no trace in the coverage profile, so this is where
+// WorkerMain's dispatch — limits first, then serveWorker — is measured.
+func TestWorkerMainInProcess(t *testing.T) {
+	prev := debug.SetMemoryLimit(-1)
+	t.Cleanup(func() { debug.SetMemoryLimit(prev) })
+	t.Cleanup(saveDataLimit(t))
+	var out, errw bytes.Buffer
+	if code := WorkerMain([]string{".txt"}, strings.NewReader("plain idea"), &out, &errw); code != 0 || out.String() != "plain idea" || errw.Len() != 0 {
+		t.Fatalf("WorkerMain = %d, %q (stderr %q); want 0, plain idea, no stderr", code, out.String(), errw.String())
+	}
+	if got := debug.SetMemoryLimit(-1); got != workerMemoryLimit {
+		t.Fatalf("memory limit after WorkerMain = %d, want %d", got, workerMemoryLimit)
+	}
+	out.Reset()
+	errw.Reset()
+	if code := WorkerMain(nil, strings.NewReader("x"), &out, &errw); code != 2 || out.Len() != 0 || !strings.Contains(errw.String(), "usage") {
+		t.Fatalf("WorkerMain(nil) = %d, %q (stderr %q); want 2, no stdout, usage", code, out.String(), errw.String())
+	}
+}
+
 func TestApplyWorkerLimits(t *testing.T) {
 	prev := debug.SetMemoryLimit(-1)
 	t.Cleanup(func() { debug.SetMemoryLimit(prev) })
