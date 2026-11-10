@@ -391,6 +391,27 @@ func TestAdminRematchStatusStaleJobID(t *testing.T) {
 	}
 }
 
+func TestAdminRematchStatusPrunesStaleJobs(t *testing.T) {
+	t.Setenv("DIBS_ADMINS", "root")
+	a, mux := newAPIFixture(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	withFixedNow(t, now)
+	a.rematchJobs = map[string]*adminRematchJob{
+		"stale":   {ID: "1", Status: "done", FinishedAt: now.Add(-adminRematchRetention - time.Minute)},
+		"fresh":   {ID: "2", Status: "done", FinishedAt: now.Add(-time.Minute)},
+		"running": {ID: "3", Status: "running"},
+	}
+	rec := do(t, mux, ident("root"), "GET", "/api/admin/ideas/stale/rematch", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("stale job: status = %d, want 404", rec.Code)
+	}
+	for _, id := range []string{"fresh", "running"} {
+		if a.rematchJobs[id] == nil {
+			t.Fatalf("%s job was pruned", id)
+		}
+	}
+}
+
 func TestDecodeInputRejectsBadBodies(t *testing.T) {
 	_, mux := newAPIFixture(t)
 	rec := do(t, mux, ident("alice"), "POST", "/api/ideas", "{not json")

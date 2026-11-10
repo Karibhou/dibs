@@ -30,6 +30,10 @@ const maxRequestBody = store.MaxBodyBytes + 64*1024
 
 const adminRematchTimeout = 5 * time.Minute
 
+// adminRematchRetention is how long a finished rematch job (and its event
+// log) stays available for status polling and dry-run apply.
+const adminRematchRetention = 30 * time.Minute
+
 // API wires the store, registry, match engine, settler, and notifications
 // into HTTP handlers.
 type API struct {
@@ -273,6 +277,7 @@ func (a *API) startAdminRematch(w http.ResponseWriter, r *http.Request, idea *st
 		writeError(w, http.StatusConflict, "rematch already running")
 		return
 	}
+	a.pruneRematchJobsLocked(timeNow())
 	a.rematchSeq++
 	job := &adminRematchJob{ID: strconv.FormatInt(a.rematchSeq, 10), Status: "running", Dry: dry, IdeaUpdatedAt: idea.UpdatedAt}
 	a.rematchJobs[idea.ID] = job
@@ -281,6 +286,20 @@ func (a *API) startAdminRematch(w http.ResponseWriter, r *http.Request, idea *st
 
 	go a.runAdminRematch(context.WithoutCancel(r.Context()), idea, persist, job)
 	writeJSON(w, http.StatusAccepted, res)
+}
+
+// pruneRematchJobsLocked drops finished jobs older than the retention window.
+// Callers must hold a.rematchMu.
+func (a *API) pruneRematchJobsLocked(now time.Time) {
+	cutoff := now.Add(-adminRematchRetention)
+	for id, j := range a.rematchJobs {
+		if j.Status == "running" || j.Status == "applying" || j.FinishedAt.IsZero() {
+			continue
+		}
+		if j.FinishedAt.Before(cutoff) {
+			delete(a.rematchJobs, id)
+		}
+	}
 }
 
 func (a *API) tryApplyDryRematch(w http.ResponseWriter, idea *store.Idea) bool {
@@ -369,6 +388,7 @@ func (a *API) handleAdminRematchStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	wantJob := r.URL.Query().Get("job")
 	a.rematchMu.Lock()
+	a.pruneRematchJobsLocked(timeNow())
 	job := a.rematchJobs[id]
 	var res adminRematchResponse
 	if job != nil && (wantJob == "" || job.ID == wantJob) {
