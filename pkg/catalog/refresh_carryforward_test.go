@@ -357,3 +357,35 @@ func TestRefreshSkipsEnrichAfterDeadline(t *testing.T) {
 		t.Fatalf("List() = %d projects, want all persisted", got)
 	}
 }
+
+func TestRefreshCarryForwardMatchesRepoIDCaseInsensitively(t *testing.T) {
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	cachedAt := now.Add(-3 * 24 * time.Hour)
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer gh.Close()
+
+	s := newRefreshStore(t, gh, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(rateLimitLandscapeYAML))
+	})
+	s.Now = func() time.Time { return now }
+	s.setProjects([]Project{{
+		Name: "beta", RepoID: "CNCF/Beta", Description: "cached beta",
+		Topics: []string{"cached"}, Language: "Rust", Readme: "cached readme", FetchedAt: cachedAt,
+	}})
+
+	if err := s.Refresh(t.Context()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	for _, p := range s.List() {
+		if p.RepoID != "cncf/beta" {
+			continue
+		}
+		if p.Readme != "cached readme" || p.Description != "cached beta" || len(p.Topics) != 1 || !p.FetchedAt.Equal(cachedAt) {
+			t.Fatalf("beta lost prior enrichment across case-differing RepoID: %+v", p)
+		}
+		return
+	}
+	t.Fatal("cncf/beta missing after Refresh")
+}

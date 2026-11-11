@@ -194,7 +194,7 @@ func (s *Store) Refresh(ctx context.Context) error {
 	fetchedAt := s.now().UTC()
 	prev := make(map[string]Project)
 	for _, p := range s.List() {
-		prev[p.RepoID] = p
+		prev[strings.ToLower(p.RepoID)] = p
 	}
 	// A 200 that parses to nothing (empty body, renamed upstream keys) is a
 	// degraded fetch, not a landscape that legitimately lost every project.
@@ -208,7 +208,7 @@ func (s *Store) Refresh(ctx context.Context) error {
 		order[i] = i
 	}
 	sort.SliceStable(order, func(a, b int) bool {
-		return prev[projects[order[a]].RepoID].FetchedAt.Before(prev[projects[order[b]].RepoID].FetchedAt)
+		return prev[strings.ToLower(projects[order[a]].RepoID)].FetchedAt.Before(prev[strings.ToLower(projects[order[b]].RepoID)].FetchedAt)
 	})
 	for _, i := range order {
 		p := &projects[i]
@@ -233,7 +233,7 @@ func (s *Store) Refresh(ctx context.Context) error {
 			p.FetchedAt = fetchedAt
 			continue
 		}
-		if old, ok := prev[p.RepoID]; ok {
+		if old, ok := prev[strings.ToLower(p.RepoID)]; ok {
 			if strings.TrimSpace(old.Description) != "" {
 				p.Description = old.Description
 			}

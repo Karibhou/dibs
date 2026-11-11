@@ -673,15 +673,15 @@ func (e *Engine) PersistRematchResults(ideaID string, expectedUpdatedAt time.Tim
 		i.TLDR = tldr
 		replaced := make(map[string]bool, len(matches))
 		for _, m := range matches {
-			replaced[m.RepoID] = true
+			replaced[strings.ToLower(m.RepoID)] = true
 		}
 		merged := append([]store.Match(nil), matches...)
 		for _, old := range i.Matches {
-			if !replaced[old.RepoID] {
+			if !replaced[strings.ToLower(old.RepoID)] {
 				merged = append(merged, old)
 			}
 			if old.Score >= NotifyThreshold {
-				alreadyNotified[old.RepoID] = true
+				alreadyNotified[strings.ToLower(old.RepoID)] = true
 			}
 		}
 		i.Matches = merged
@@ -700,7 +700,7 @@ func (e *Engine) PersistRematchResults(ideaID string, expectedUpdatedAt time.Tim
 	if e.Notifier != nil {
 		var pending []pendingMatch
 		for _, m := range matches {
-			if m.Score < NotifyThreshold || alreadyNotified[m.RepoID] {
+			if m.Score < NotifyThreshold || alreadyNotified[strings.ToLower(m.RepoID)] {
 				continue
 			}
 			if rp, err := e.Registry.Get(m.RepoID); err == nil {

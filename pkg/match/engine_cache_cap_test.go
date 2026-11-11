@@ -79,3 +79,45 @@ func TestMatchesForIdeaCachesFullSetAndCapsReturned(t *testing.T) {
 		t.Fatalf("notifier fired %d more times on second call", notes.n-notified)
 	}
 }
+
+// TestPersistRematchResultsMixedCaseRepoID: a stored match spelled Foo/Bar and
+// a new match spelled foo/bar are the same repo, so it is replaced (not
+// duplicated) and not notified again.
+func TestPersistRematchResultsMixedCaseRepoID(t *testing.T) {
+	st, reg := newFixtures(t)
+	if err := reg.Merge([]registry.RepoProfile{{RepoID: "foo/bar", Owner: "bob", Description: "kubernetes scheduling"}}); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	rp, err := reg.Get("foo/bar")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	idea := createIdea(t, st, "Kubernetes scheduling", "Schedule workloads.")
+	if _, err := st.Mutate(idea.ID, false, func(i *store.Idea) error {
+		i.Matches = []store.Match{{RepoID: "Foo/Bar", Score: NotifyThreshold + 10}}
+		return nil
+	}); err != nil {
+		t.Fatalf("Mutate: %v", err)
+	}
+	saved, err := st.Get(idea.ID)
+	if err != nil {
+		t.Fatalf("Get idea: %v", err)
+	}
+	notes := &countingNotifier{}
+	e := &Engine{Store: st, Registry: reg, Notifier: notes}
+	fresh := []store.Match{{RepoID: "foo/bar", Score: NotifyThreshold + 10, RepoHash: RepoHash(rp)}}
+
+	if err := e.PersistRematchResults(idea.ID, saved.UpdatedAt, "tldr", fresh, nil, ""); err != nil {
+		t.Fatalf("PersistRematchResults: %v", err)
+	}
+	got, err := st.Get(idea.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Matches) != 1 || got.Matches[0].RepoID != "foo/bar" {
+		t.Fatalf("matches = %+v, want the single replaced foo/bar", got.Matches)
+	}
+	if notes.n != 0 {
+		t.Fatalf("notifier fired %d times, want 0 for an already-notified repo", notes.n)
+	}
+}
