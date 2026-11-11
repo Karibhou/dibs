@@ -26,7 +26,56 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Resolve the Go version the Dockerfile builder actually ships
+        # go.mod says "go 1.27", which setup-go resolves to the NEWEST patch,
+        # so a scan keyed on go.mod never sees a stdlib advisory the pinned
+        # builder digest still carries (#341, #443, #646). Scan the toolchain
+        # the image is built with instead; when a Go point release fixes
+        # something reachable, this job goes red until the digest is bumped.
+        id: builder
+        run: |
+          set -euo pipefail
+          ref=$(sed -nE 's/^FROM (--platform=[^ ]+ )?(golang:[^ ]+) AS builder.*/\2/p' Dockerfile | head -1)
+          [ -n "$ref" ] || { echo "no golang builder FROM in Dockerfile"; exit 1; }
+          ver=$(docker run --rm "$ref" go env GOVERSION | sed 's/^go//')
+          [ -n "$ver" ] || { echo "could not read GOVERSION from $ref"; exit 1; }
+          echo "builder toolchain: go$ver ($ref)"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
       - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
         with:
-          go-version-file: go.mod
+          go-version-input: ${{ steps.builder.outputs.version }}
           go-package: ./...
+
+  builder-lag:
+    # The pinned builder digest must not quietly trail the newest patch of
+    # its Go minor. Dependabot bumps the digest on its own schedule; this job
+    # makes the gap visible as soon as go.dev publishes a point release.
+    # It fails on main and on the cron (so the lag is red until the digest
+    # bump lands) but only warns on pull requests, which cannot fix it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Compare pinned builder Go version with the newest patch release
+        run: |
+          set -euo pipefail
+          ref=$(sed -nE 's/^FROM (--platform=[^ ]+ )?(golang:[^ ]+) AS builder.*/\2/p' Dockerfile | head -1)
+          [ -n "$ref" ] || { echo "no golang builder FROM in Dockerfile"; exit 1; }
+          pinned=$(docker run --rm "$ref" go env GOVERSION | sed 's/^go//')
+          minor=$(echo "$pinned" | cut -d. -f1,2)
+          newest=$(curl -fsSL 'https://go.dev/dl/?mode=json' \
+            | jq -r --arg m "go$minor." '[.[] | select(.stable and (.version | startswith($m))) | .version] | first // empty' \
+            | sed 's/^go//')
+          [ -n "$newest" ] || { echo "::warning::go.dev lists no stable release for Go $minor; skipping lag check"; exit 0; }
+          echo "pinned builder: go$pinned; newest $minor patch: go$newest"
+          if [ "$pinned" = "$newest" ]; then
+            echo "builder is current"; exit 0
+          fi
+          if [ "$(printf '%s\n%s\n' "$pinned" "$newest" | sort -V | tail -1)" = "$pinned" ]; then
+            echo "builder go$pinned is newer than go.dev's newest $minor release go$newest"; exit 0
+          fi
+          msg="Dockerfile builder $ref ships go$pinned but go$newest is the newest $minor patch; bump the digest (Dependabot docker update) so the shipped binary carries the stdlib fixes"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "::warning title=builder toolchain lag::$msg"; exit 0
+          fi
+          echo "::error title=builder toolchain lag::$msg"; exit 1

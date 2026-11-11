@@ -12,8 +12,11 @@ updates:
 
   - package-ecosystem: docker
     directory: /
+    # Daily, not weekly: the builder image is digest-pinned and the
+    # builder-lag job in go-security.yml goes red when a Go point release
+    # lands, so the bump PR should arrive within hours rather than a week.
     schedule:
-      interval: weekly
+      interval: daily
 
   - package-ecosystem: github-actions
     directory: /
