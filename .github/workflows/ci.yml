@@ -66,10 +66,10 @@ jobs:
             -coverprofile=coverage.out \
             ./...
       - name: Casefold audit (advisory ratchet)
-        # Warning-only for 14 days of visible main observations, then switch to ratchet; see docs/casefold-gate.md.
+        # Enforcing (ratchet) since 2026-11-11 after the 14-day warning window; see docs/casefold-gate.md.
         # Keep -v and -count=1: passing/cached test logs otherwise hide observations.
         env:
-          DIBS_CASEFOLD_GATE: ratchet-warning
+          DIBS_CASEFOLD_GATE: ratchet
         run: |
           set -euo pipefail
           echo '### Casefold audit' >> "$GITHUB_STEP_SUMMARY"

@@ -44,28 +44,19 @@ The recorded baseline is **0 unreviewed sites**, measured at `main@1938d81`
 (#508), and stored as `casefoldBaseline` in the gate test. New unreviewed sites
 must be reviewed or fixed, rather than accepted by raising the baseline.
 
-Per the decision on #509, CI starts with `DIBS_CASEFOLD_GATE=ratchet-warning`.
-Dibs publishes a commit-sha image after each green `main` CI run rather than
-using tagged releases (see [the release runbook](../runbooks/release-rollback.md#how-releases-reach-the-cluster)).
-For this gate, the one-release warning window means **14 calendar days from
-the first successful `main` CI run containing the visible audit step**. Use
-that run's timestamp to determine the earliest enforcement date; a merge or
-image publication alone does not end the window.
+Per the decision on #509, CI ran with `DIBS_CASEFOLD_GATE=ratchet-warning` from
+2026-10-28 (first visible audit after #508) through 2026-11-11. Dibs publishes
+a commit-sha image after each green `main` CI run rather than using tagged
+releases (see [the release runbook](../runbooks/release-rollback.md#how-releases-reach-the-cluster)).
+After main run [43046057372](https://github.com/hivecommons/dibs/actions/runs/43046057372)
+(commit 6e7101a9c700a29793091bd280c6d0760ebfa518, 2026-11-11T15:12:40Z) confirmed
+0 unreviewed sites following #648's normalisation of 8 casefold-mismatched sites,
+enforcement was enabled: CI now runs `DIBS_CASEFOLD_GATE=ratchet`.
 
-Counts above the baseline print `WARNING` and the individual sites
-without failing. Stale allowlist entries, scanner errors and test failures
-still fail the job; the reporting pipeline preserves the test exit status.
-
-After those 14 days, verify the audit logs and job summaries from `main` and
-open a follow-up PR changing the workflow environment to
-`DIBS_CASEFOLD_GATE=ratchet`. Include links to the first visible successful run
-and the observations reviewed, so the elapsed window is checkable. That mode
-fails only when the unreviewed count exceeds the recorded baseline (equal or
+That mode fails only when the unreviewed count exceeds the recorded baseline (equal or
 lower passes).
 It does not change the local advisory default. `strict` continues to fail on
-any unreviewed site, independently of the baseline. Verify the visible CI
-observations before enabling enforcement; the old two-week period without
-diagnostics is not evidence for that switch.
+any unreviewed site, independently of the baseline.
 
 Only an unset/empty value, `ratchet-warning`, `ratchet`, and `strict` are valid
 for `DIBS_CASEFOLD_GATE`. Unknown values fail the test with a configuration
