@@ -134,6 +134,37 @@ func TestDecodeRecordingsShapes(t *testing.T) {
 	}
 }
 
+func TestTimeFieldNumeric(t *testing.T) {
+	// Plaud emits epoch timestamps as JSON numbers; the 1e12 threshold decides
+	// whether a value is milliseconds or seconds. Getting it wrong moves every
+	// recording to 1970 or far into the future, which breaks the start_at
+	// ordering the cursor relies on.
+	want := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		m    map[string]any
+		want time.Time
+	}{
+		{"epoch millis", map[string]any{"start_at": float64(want.UnixMilli())}, want},
+		{"epoch seconds", map[string]any{"start_at": float64(want.Unix())}, want},
+		{"zero", map[string]any{"start_at": float64(0)}, time.Time{}},
+		{"negative", map[string]any{"start_at": float64(-5)}, time.Time{}},
+		{"unsupported type", map[string]any{"start_at": true}, time.Time{}},
+		{"missing", map[string]any{}, time.Time{}},
+		{"first key wins", map[string]any{"a": float64(want.Unix()), "b": "2000-01-01"}, want},
+		{"falls through unparsable key", map[string]any{"a": "not a time", "b": float64(want.UnixMilli())}, want},
+	}
+	for _, tc := range cases {
+		got := timeField(tc.m, "start_at", "a", "b")
+		if !got.Equal(tc.want) {
+			t.Errorf("%s: timeField = %v, want %v", tc.name, got, tc.want)
+		}
+		if got.Location() != time.UTC {
+			t.Errorf("%s: location = %v, want UTC", tc.name, got.Location())
+		}
+	}
+}
+
 func TestRenderText(t *testing.T) {
 	cases := map[string]string{
 		// Unwrapped prose is a server status message: not ready.
