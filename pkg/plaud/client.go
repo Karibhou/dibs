@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -44,15 +45,30 @@ func Connect(ctx context.Context, t mcpsdk.Transport) (*Client, error) {
 }
 
 // Dial spawns command (split on whitespace; no shell quoting) and connects
-// to it over stdin/stdout. The server's stderr is forwarded to stderr.
+// to it over stdin/stdout. The server's stderr is forwarded to stderr. The
+// hub bearer token is removed from the child's environment: the server is a
+// third-party package that has no use for it.
 func Dial(ctx context.Context, command string, stderr io.Writer) (*Client, error) {
 	argv := strings.Fields(command)
 	if len(argv) == 0 {
 		return nil, errors.New("plaud: empty MCP command")
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = envWithout(os.Environ(), EnvToken)
 	cmd.Stderr = stderr
 	return Connect(ctx, &mcpsdk.CommandTransport{Command: cmd})
+}
+
+// envWithout returns env without the variable name.
+func envWithout(env []string, name string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if strings.HasPrefix(kv, name+"=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // CallTool invokes a tool and returns its text content joined by newlines.

@@ -47,6 +47,27 @@ func TestDialSpawnsStdioServer(t *testing.T) {
 	}
 }
 
+func TestDialScrubsHubTokenFromChildEnv(t *testing.T) {
+	t.Setenv(fakeEnv, "1")
+	t.Setenv(EnvToken, "secret-xyz")
+	t.Setenv("PATH", "/plaud-test-path")
+	c, err := Dial(context.Background(), os.Args[0], io.Discard)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+	got, err := c.CallTool(context.Background(), "env", nil)
+	if err != nil {
+		t.Fatalf("env: %v", err)
+	}
+	if strings.Contains(got, "secret-xyz") {
+		t.Fatalf("hub token reached the child: %q", got)
+	}
+	if !strings.Contains(got, "PATH=/plaud-test-path") {
+		t.Fatalf("unrelated env not inherited: %q", got)
+	}
+}
+
 func TestDialErrors(t *testing.T) {
 	if _, err := Dial(context.Background(), "   ", io.Discard); err == nil {
 		t.Fatal("empty command: want error")
