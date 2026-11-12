@@ -58,7 +58,7 @@ func (c *Cursor) Save(path string) error {
 // markSubmitted records r as submitted at now.
 func (c *Cursor) markSubmitted(r Recording, now time.Time) {
 	when := r.When()
-	if when.IsZero() {
+	if when.IsZero() || when.After(now) {
 		when = now
 	}
 	c.Seen[r.ID] = when

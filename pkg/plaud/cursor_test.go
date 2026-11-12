@@ -36,6 +36,26 @@ func TestCursorRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCursorNewestNeverPassesNow(t *testing.T) {
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	today := now.Add(-time.Hour)
+	c := &Cursor{Seen: map[string]time.Time{}}
+	c.markSubmitted(Recording{ID: "today", StartAt: today}, now)
+	c.markSubmitted(Recording{ID: "future", StartAt: now.Add(1000 * time.Hour)}, now)
+	if !c.Newest.Equal(now) {
+		t.Fatalf("newest = %v, want %v", c.Newest, now)
+	}
+	if since := c.Newest.Add(-relistOverlap); since.After(today) {
+		t.Fatalf("next listing starts at %v, after today's recording %v", since, today)
+	}
+	c.prune(now)
+	for _, id := range []string{"today", "future"} {
+		if _, ok := c.Seen[id]; !ok {
+			t.Errorf("prune dropped %q", id)
+		}
+	}
+}
+
 func TestLoadCursorErrors(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := LoadCursor(dir); err == nil {

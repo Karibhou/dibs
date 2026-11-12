@@ -354,6 +354,11 @@ logs `budget_exhausted=true`; when Dibs answers HTTP 429 it logs
 wait for the next run. Descriptions are cut to the 64 KiB idea body limit. The helper never reads or
 copies Plaud's OAuth token (`~/.plaud/tokens-mcp.json`).
 
+Future recording timestamps are clamped to the submission time in the cursor,
+so they do not move the next listing window into the future. Existing cursors
+already set in the future need their `newest` field corrected manually; retain
+the `seen` entries to avoid resubmitting recordings.
+
 Cron (every 15 minutes):
 
 ```cron
