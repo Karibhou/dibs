@@ -318,6 +318,67 @@ In Claude Code and Claude Desktop the prompt appears as a slash command once
 the connector is added. Clients that do not surface prompts in their UI can
 still call `prompts/get` directly.
 
+## Capture voice notes from a Plaud recorder
+
+`dibs ingest plaud` turns Plaud Note / Note Pro recordings into private draft
+ideas, unattended and at no cost beyond the Plaud subscription. It talks to the
+official, free Plaud MCP server (`npx -y @plaud-ai/mcp@latest`, over stdio),
+lists recordings since its cursor, fetches each one's Plaud summary and
+transcript, and submits them with the `submit_idea` tool (tags `plaud,voice-note`).
+
+```sh
+# Once: sign in to Plaud through its MCP server (the token stays in ~/.plaud).
+# Then, with your hub token (see "Token" above):
+export DIBS_TOKEN=...
+dibs ingest plaud                    # one pass, for cron/launchd
+dibs ingest plaud --interval 15m     # or keep polling
+```
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--server` | `$DIBS_URL` or `https://dibs.hivecommons.dev` | Dibs base URL (including any base path) |
+| `--token` | `$DIBS_TOKEN` | Hub bearer token; prefer the env var, flags show up in `ps`. Never logged |
+| `--interval` | `0` | Poll interval; `0` runs once |
+| `--cursor` | `~/.dibs/plaud-cursor.json` | Submitted Plaud ids, newest recording time, recent submission times |
+| `--mcp-command` | `$DIBS_PLAUD_MCP_COMMAND` or `npx -y @plaud-ai/mcp@latest` | Plaud MCP server command (whitespace-separated, no shell quoting) |
+| `--since-days` | `7` | How far back the first run looks |
+| `--tags` | `plaud,voice-note` | Comma-separated tags |
+| `--max-per-hour` / `--max-per-day` | `10` / `30` | Submission budget per rolling hour / 24h (`0` = unlimited) |
+
+Each recording is submitted once: its Plaud id is recorded in the cursor file
+right after the submission succeeds. Recordings with no summary or transcript
+yet are retried on the next run. Long transcripts are fetched page by page
+(following the server's `next_cursor`). When the budget is used up the run
+logs `budget_exhausted=true`; when Dibs answers HTTP 429 it logs
+`rate_limited=true`; either way the run stops and the remaining recordings
+wait for the next run. Descriptions are cut to the 64 KiB idea body limit. The helper never reads or
+copies Plaud's OAuth token (`~/.plaud/tokens-mcp.json`).
+
+Cron (every 15 minutes):
+
+```cron
+*/15 * * * * DIBS_TOKEN=... /usr/local/bin/dibs ingest plaud >>"$HOME/.dibs/plaud.log" 2>&1
+```
+
+launchd (`~/Library/LaunchAgents/dev.hivecommons.dibs-plaud.plist`, load with
+`launchctl load` on that file):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>dev.hivecommons.dibs-plaud</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/local/bin/dibs</string><string>ingest</string><string>plaud</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>DIBS_TOKEN</key><string>...</string>
+    <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartInterval</key><integer>900</integer>
+</dict></plist>
+```
+
 ## Operations and further reading
 
 - [MCP Registry publishing](docs/mcp-registry.md): listing manifest and operator steps for DNS authentication, publication, and verification.

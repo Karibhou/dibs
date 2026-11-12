@@ -121,6 +121,11 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
+	if len(os.Args) > 1 && os.Args[1] == ingestCommand {
+		code := ingest(ctx, os.Args[2:], os.Stderr)
+		stop()
+		os.Exit(code)
+	}
 	if exe, err := os.Executable(); err == nil {
 		intake.SetExtractWorker(exe)
 	} else {
